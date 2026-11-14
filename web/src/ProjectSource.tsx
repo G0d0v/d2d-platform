@@ -5,7 +5,7 @@ export function ProjectSource({projectId,canAdmin,work}:{projectId:string;canAdm
  const [artifacts,setArtifacts]=useState<any[]>([]),[jobs,setJobs]=useState<any[]>([]),[selected,setSelected]=useState(''),[error,setError]=useState<Error|null>(null),[busy,setBusy]=useState(false),[recipe,setRecipe]=useState(false),[command,setCommand]=useState(''),[file,setFile]=useState<{path:string;content:string}|null>(null),[q,setQ]=useState('');const input=useRef<HTMLInputElement>(null);
  const artifact=artifacts.find(a=>a.id===selected)??artifacts[0];
  const uploadIntent=useRef<WorkIntent|null>(null);
- async function load(){try{const r=await api(`/projects/${projectId}/source`);setArtifacts(r.artifacts);setJobs(r.installations);setError(null);}catch(e){setError(e as Error);}}
+ async function load(){try{const r=await api(`/projects/${projectId}/source`);setArtifacts(r.artifacts);setSelected(current=>r.artifacts.some((a:any)=>a.id===current)?current:r.artifacts[0]?.id??'');setJobs(r.installations);setError(null);}catch(e){setError(e as Error);}}
  useEffect(()=>{setSelected('');void load();const t=setInterval(()=>void load(),15000);return()=>clearInterval(t);},[projectId]);
  async function upload(f:File){if(f.size>25*1024*1024){setError(new Error('Архив не должен превышать 25 МиБ'));return;}setBusy(true);setError(null);try{if(work||uploadIntent.current)requireWorkIntent(uploadIntent.current,work);const r=await uploadZip(projectId,f,uploadIntent.current?.generation);setSelected(r.artifact.id);await load();}catch(e){setError(e as Error);}finally{setBusy(false);if(input.current)input.current.value='';}}
  const states:Record<string,string>={pending:'Команда выдана',running:'Устанавливается',installed:'Установлен',failed:'Ошибка установки'};
