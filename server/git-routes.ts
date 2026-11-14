@@ -14,10 +14,12 @@ import {storeSource,type Register} from './source-routes.ts';
 import type {Forgejo} from './forgejo.ts';
 import {registerGitGateway} from './git-gateway.ts';
 import {importSource} from './git-source.ts';
+import {GitHistory,recordOwnership} from './git-history.ts';
 
 export function registerGitRoutes(app:FastifyInstance,route:Register,db:Database,options:{git?:Forgejo;origin:string;dataDir?:string}){
   const {git}=options,blobs=resolve(options.dataDir??'.d2d','blobs');
-  registerGitGateway(app,db,git);
+  const history=git?new GitHistory(git,resolve(options.dataDir??'.d2d','git-cache')):undefined;
+  registerGitGateway(app,db,git,history);
   const client=()=>{if(!git)throw new Problem(503,'GIT_NOT_CONFIGURED','Git ещё не настроен');return git;};
   const base=(project:string)=>`/repos/${client().repo(project)}`;
   const param=(req:any,name:string,fallback='')=>new URL(req.url,'http://local').searchParams.get(name)??fallback;
@@ -42,8 +44,29 @@ export function registerGitRoutes(app:FastifyInstance,route:Register,db:Database
     return reply.type('text/plain; charset=utf-8').send(Readable.fromWeb(r.body as any));
   });
   route('GET','/projects/:id/git/commits','История коммитов выбранной ветки',null,async(tx,a,req)=>{
-    await member(tx,a,req.params.id);return {commits:await client().json(`${base(req.params.id)}/commits?sha=${encodeURIComponent(param(req,'ref','main'))}&limit=30&page=${Math.max(1,Number(param(req,'page','1'))||1)}`)};
+    await member(tx,a,req.params.id);const commits=await client().json(`${base(req.params.id)}/commits?sha=${encodeURIComponent(param(req,'ref','main'))}&limit=30&page=${Math.max(1,Number(param(req,'page','1'))||1)}`);
+    const own=new Set((await tx.query('SELECT commit_sha FROM git_ownership WHERE project_id=$1 AND user_id=$2',[req.params.id,a.userId])).rows.map(r=>r.commit_sha));
+    return {commits:commits.map((c:any)=>({...c,owned_by_me:own.has(c.sha)}))};
   });
+  route('GET','/projects/:id/git/file-metadata','Даты добавления/обновления файлов и последний коммит, по 100 файлов',null,async(tx,a,req)=>{
+    await member(tx,a,req.params.id);client();return history!.metadata(req.params.id,param(req,'ref','main'),param(req,'path'),Math.max(1,Number(param(req,'page','1'))||1));
+  });
+  route('GET','/projects/:id/git/file-history','Полная постраничная история файла, включая переименования',null,async(tx,a,req)=>{
+    await member(tx,a,req.params.id);client();const path=param(req,'path');if(!path)throw new Problem(422,'PATH_REQUIRED','Выберите файл');
+    const result=await history!.fileHistory(req.params.id,param(req,'ref','main'),path,Math.max(1,Number(param(req,'page','1'))||1));
+    const own=new Set((await tx.query('SELECT commit_sha FROM git_ownership WHERE project_id=$1 AND user_id=$2',[req.params.id,a.userId])).rows.map(r=>r.commit_sha));
+    return {...result,commits:result.commits.map(c=>({...c,owned_by_me:own.has(c.sha)}))};
+  });
+  route('GET','/projects/:id/git/commit-diff','Красно-зелёные изменения конкретного коммита',null,async(tx,a,req,reply)=>{
+    await member(tx,a,req.params.id);client();const sha=param(req,'sha');if(!/^[a-f0-9]{40,64}$/.test(sha))throw new Problem(422,'COMMIT_REQUIRED','Выберите конкретный коммит');
+    return reply.type('text/plain; charset=utf-8').send(await history!.diff(req.params.id,sha));
+  });
+  route('POST','/projects/:id/git/revert','Откатить свой коммит новым коммитом в рабочей ветке',object({sha:{...text(64),pattern:'^[a-f0-9]{40,64}$'},ref:text(200),expected_head:{...text(64),pattern:'^[a-f0-9]{40,64}$'},generation}),async(tx,a,req)=>{
+    const w=await write(tx,a,req),owned=(await tx.query('SELECT user_id FROM git_ownership WHERE project_id=$1 AND commit_sha=$2',[req.params.id,req.body.sha])).rows[0];
+    if(!owned||owned.user_id!==a.userId)throw new Problem(403,'NOT_YOUR_COMMIT','Можно откатить только изменения, отправленные вами или вашим агентом');
+    client();const result=await history!.revert(req.params.id,req.body.ref,req.body.expected_head,req.body.sha,w.branch,a);
+    await recordOwnership(tx,req.params.id,result.commit_sha,a,w);await event(tx,a,req.params.id,'git.reverted','Свои изменения отменены новым Git-коммитом',{original_sha:req.body.sha,...result,generation:w.generation});return result;
+  },{authorize:async(tx,a,req)=>{await write(tx,a,req);}});
   route('POST','/projects/:id/git/branches','Создать ветку',object({name:text(200),from:text(200)}),async(tx,a,req)=>{
     await write(tx,a,req);const branch=await client().json(base(req.params.id)+'/branches','POST',{new_branch_name:req.body.name,old_ref_name:req.body.from});await event(tx,a,req.params.id,'git.branch','Создана ветка',{name:req.body.name,from:req.body.from});return {branch};
   });
@@ -52,6 +75,7 @@ export function registerGitRoutes(app:FastifyInstance,route:Register,db:Database
     if(!f)throw new Problem(404,'NOT_FOUND','Версия не найдена');await client().ensure(req.params.id);
     const repo=await client().exists(req.params.id);const branch=repo.empty?'main':w.branch;
     const commit=await importSource(client(),req.params.id,f,resolve(blobs,f.sha256+'.zip'),resolve(options.dataDir??'.d2d','git-work'),branch,a,req.body.message);
+    await recordOwnership(tx,req.params.id,commit,a,w);
     await event(tx,a,req.params.id,'git.import','Исходники записаны в Git',{artifact_id:f.id,commit_sha:commit,branch});return {commit_sha:commit,branch};
   });
   route('POST','/projects/:id/git/snapshot','Подготовить установочную версию из точного Git-коммита',object({ref:text(200)}),async(tx,a,req)=>{

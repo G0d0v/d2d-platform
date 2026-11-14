@@ -31,14 +31,14 @@ export function GitText({url, title, readme = false}: {url: string; title: strin
   </section>;
 }
 
-export function GitDiff({url}: {url: string}) {
+export function GitDiff({url,onComment}: {url: string;onComment?:(file:string,line:number,side:'before'|'after')=>void}) {
   const {code, loading, error} = useGitText(url), files = useMemo(() => parseDiff(code), [code]);
   const [filter, setFilter] = useState('');
   const visible = files.map((file, index) => ({file, index})).filter(({file}) => file.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
   return <div className="diff-view"><ErrorBox error={error}/>{loading ? <p className="panel-note muted" role="status">Загрузка изменений…</p> : !error && <>
     <div className="diff-summary"><strong>Изменено файлов: {files.length}</strong><span><b className="diff-added">+{files.reduce((n, f) => n + f.added, 0)}</b> <b className="diff-removed">−{files.reduce((n, f) => n + f.removed, 0)}</b></span><a className="button small" href={url} target="_blank" rel="noreferrer">Исходный diff</a></div>
     <div className="diff-layout"><aside className="diff-index"><label className="repo-search"><Search size={15}/><input aria-label="Фильтр изменённых файлов" placeholder="Найти файл…" value={filter} onChange={e => setFilter(e.target.value)}/></label><nav aria-label="Изменённые файлы">{visible.map(({file, index}) => <a key={index} href={`#diff-file-${index}`} onClick={e => { e.preventDefault(); document.getElementById(`diff-file-${index}`)?.scrollIntoView({block: 'start'}); }}><FileCode2 size={15}/>{file.name}</a>)}</nav></aside>
-      <div className="diff-files">{visible.length ? visible.map(({file, index}) => <section className="diff-file" id={`diff-file-${index}`} key={index}><header><FileCode2 size={16}/><strong>{file.name}</strong><span><b className="diff-added">+{file.added}</b> <b className="diff-removed">−{file.removed}</b></span></header><pre>{file.lines.map((line, i) => <div className={`diff-line ${line.kind}`} key={i}><span className="diff-number" aria-hidden="true">{line.old}</span><span className="diff-number" aria-hidden="true">{line.next}</span><code>{line.text || ' '}</code></div>)}</pre></section>) : <p className="panel-note muted">{files.length ? 'Файлы не найдены.' : 'Текстовых изменений нет.'}</p>}</div>
+      <div className="diff-files">{visible.length ? visible.map(({file, index}) => <section className="diff-file" id={`diff-file-${index}`} key={index}><header><FileCode2 size={16}/><strong>{file.name}</strong><span><b className="diff-added">+{file.added}</b> <b className="diff-removed">−{file.removed}</b></span></header><pre>{file.lines.map((line, i) => <div className={`diff-line ${line.kind}`} key={i}>{onComment&&(line.old!==undefined||line.next!==undefined)?<button className="diff-comment-button" aria-label={`Обсудить ${file.name}, строка ${line.next??line.old}`} onClick={()=>onComment(file.name,(line.next??line.old)! ,line.next!==undefined?'after':'before')}>+</button>:null}<span className="diff-number" aria-hidden="true">{line.old}</span><span className="diff-number" aria-hidden="true">{line.next}</span><code>{line.text || ' '}</code></div>)}</pre></section>) : <p className="panel-note muted">{files.length ? 'Файлы не найдены.' : 'Текстовых изменений нет.'}</p>}</div>
     </div></>}
   </div>;
 }

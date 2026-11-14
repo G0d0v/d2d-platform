@@ -5,6 +5,8 @@ import { ActionForm, Avatar, date, Empty, ErrorBox, Field, Modal, Secret } from 
 import { Auth } from './Auth.tsx';
 import { ProjectTasks } from './ProjectTasks.tsx';
 import { TaskPicker } from './TaskPicker.tsx';
+import {AgentPanel} from './AgentPanel.tsx';
+import {Notifications,NotificationBell} from './Notifications.tsx';
 import {ProjectGit} from './ProjectGit.tsx';
 import { ProjectSource } from './ProjectSource.tsx';
 import { ProjectPeople } from './ProjectPeople.tsx';
@@ -19,10 +21,10 @@ const statuses: Record<string, string> = { todo: 'Запланировано', i
 const workStates: Record<string, string> = { active: 'В разработке', paused: 'Пауза', review: 'На проверке' };
 function navigate(path: string) { location.hash = path; }
 function useRoute() {
-  const [route, setRoute] = useState(location.hash.slice(1) || 'projects');
+  const [route, setRoute] = useState(location.hash.slice(1).split('?')[0] || 'projects');
   useEffect(() => { let previous=location.hash;const change = () => {
-    if(document.querySelector('dialog[data-dirty="true"]')&&!window.confirm('В форме есть несохранённые изменения. Перейти и потерять черновик?')){history.replaceState(null,'',previous||location.pathname);return;}
-    previous=location.hash;setRoute(location.hash.slice(1) || 'projects');
+    if(document.querySelector('dialog[data-dirty="true"], dialog [data-dirty="true"]')&&!window.confirm('В форме есть несохранённые изменения. Перейти и потерять черновик?')){history.replaceState(null,'',previous||location.pathname);return;}
+    previous=location.hash;setRoute(location.hash.slice(1).split('?')[0] || 'projects');
   }; window.addEventListener('hashchange', change); return () => window.removeEventListener('hashchange', change); }, []);
   return route.split('/');
 }
@@ -110,7 +112,7 @@ export function App() {
   if (!user) return <Auth onLogin={result => { setUser(result.user); if (result.recovery_code) showSecret('Сохраните резервный код', result.recovery_code, 'Он нужен для восстановления доступа. Сохраните его в менеджере паролей: повторно код не отображается.'); }}/>;
   const filtered=projects;
   const working=myWork;
-  const titles: Record<string, string> = { overview: 'Обзор', projects: 'Проекты', work: 'Моя работа', team: 'Команда', docs: 'Документация', settings: 'Настройки', integrations: 'Интеграции' };
+  const titles: Record<string, string> = { overview: 'Обзор', projects: 'Проекты', work: 'Моя работа', team: 'Команда', docs: 'Документация', settings: 'Настройки', integrations: 'Интеграции', notifications:'Уведомления' };
   const navigation = [
     { id: 'overview', title: 'Обзор', icon: LayoutDashboard }, { id: 'projects', title: 'Проекты', icon: FolderGit2 },
     { id: 'work', title: 'Моя работа', icon: GitBranch }, { id: 'team', title: 'Команда', icon: Users },
@@ -140,7 +142,7 @@ export function App() {
     <div className="main-shell" inert={mobile}><header className="topbar"><button ref={menuButton} className="icon-button mobile-menu" onClick={() => setMobile(!mobile)} aria-expanded={mobile} aria-controls="sidebar" aria-label="Открыть навигацию"><Menu size={18}/></button><a className="header-brand" href="#projects" aria-label="D2D — проекты"><Waypoints size={28}/></a><div className="breadcrumbs"><a href="#projects">{user.login}</a><span className="muted">/</span><strong>{view === 'project' ? project?.name ?? 'Проект' : titles[view] ?? 'Проекты'}</strong></div>
       <div className="global-search"><Search size={16}/><input ref={search} value={query} onChange={e => { setQuery(e.target.value); if (view !== 'projects') navigate('projects'); }} aria-label="Поиск проектов" placeholder="Найти проект…"/><kbd>Ctrl K</kbd></div>
       <button className="icon-button mobile-search" aria-label="Открыть поиск проектов" onClick={()=>search.current?.focus()}><Search size={18}/></button>
-      <button className="icon-button" title="Сменить тему" aria-label="Сменить тему" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={18}/> : <Sun size={18}/>}</button><div className="topbar-divider"/><button className="icon-button" title="Создать проект" aria-label="Создать проект" onClick={()=>setModal('project')}><Plus size={18}/></button><a href="#settings" className="header-account" aria-label="Настройки аккаунта"><Avatar small name={user.display_name}/></a></header>
+      <button className="icon-button" title="Сменить тему" aria-label="Сменить тему" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={18}/> : <Sun size={18}/>}</button><NotificationBell/><div className="topbar-divider"/><button className="icon-button" title="Создать проект" aria-label="Создать проект" onClick={()=>setModal('project')}><Plus size={18}/></button><a href="#settings" className="header-account" aria-label="Настройки аккаунта"><Avatar small name={user.display_name}/></a></header>
       <nav className="workspace-tabs" aria-label="Разделы пространства">{navigation.map(n=><a key={n.id} href={`#${n.id}`} className={view===n.id||n.id==='projects'&&view==='project'?'active':''} aria-current={view===n.id?'page':undefined}><n.icon size={16}/>{n.title}{n.id==='work'&&working.length>0&&<span className="tab-count">{working.length}</span>}</a>)}</nav>
       <main id="main-content" className={view==='projects'?'projects-page':view==='project'?'repository-page':''}><ErrorBox error={error} retry={() => void reload()}/>
       {(view === 'projects' || !titles[view] && view !== 'project') && <>
@@ -169,10 +171,11 @@ export function App() {
         {tab === 'tasks' && <ProjectTasks key={project.id} projectId={project.id} work={work} userId={user.id} canWrite={canWrite} changed={()=>void reload()}/> }
         {tab === 'team' && <ProjectPeople key={project.id} projectId={project.id} members={detail.members} canAdmin={canAdmin} changed={()=>void reload()} add={()=>setModal('member')} invite={()=>setModal('invite')}/> }
         {tab === 'history' && <ProjectHistory key={project.id} projectId={project.id}/> }
-        {tab === 'agents' && <><div className="section-heading"><div><h2>ИИ-агенты</h2><p className="muted small-text">Доступ к этому проекту. Git работает через те же права и рабочие сессии. Право «Чтение и разработка» включает загрузку архивов и установку версии на сервер.</p></div>{canAdmin && <button className="button primary" onClick={() => setModal('agent')}><Plus size={16}/>Подключить агента</button>}</div>{canAdmin ? detail.agents.length ? <div className="list-panel">{detail.agents.map(a => <div className="agent-row" key={a.id}><span className="agent-icon"><Bot size={23}/></span><div><strong>{a.name}</strong><span className="muted">{a.scopes.includes('write') ? 'Чтение и разработка' : 'Только чтение'} · до {date(a.expires_at)}</span></div><span className={`badge ${a.revoked_at || Number(a.expires_at) <= Date.now() ? 'neutral' : 'green'}`}>{a.revoked_at ? 'Отозван' : Number(a.expires_at) <= Date.now() ? 'Истёк' : 'Действует'}</span>{!a.revoked_at && <button className="button small" onClick={() => { void api(`/agents/${a.id}/revoke`, 'POST', {}).then(() => { void reload(); flash('Доступ отозван'); }).catch(setError); }}>Отозвать</button>}</div>)}</div> : <div className="list-panel"><Empty icon={<Bot size={32}/>} title="Первый помощник для проекта" text="Выдайте агенту ограниченный токен. Он сможет читать задачи и работать с разрешённой сессией через API."/></div> : <div className="info-panel"><ShieldCheck size={22}/><p>Токенами агентов управляет администратор проекта.</p></div>}</>}
+        {tab === 'agents' && <AgentPanel key={project.id} projectId={project.id} userId={user.id} canAdmin={!!canAdmin&&canWrite} create={()=>setModal('agent')}/>}
         {tab === 'git' && <ProjectGit key={project.id} projectId={project.id} project={project} section={gitSection} memberCount={detail.members.length} work={work} userId={user.id} canWrite={canWrite} canAdmin={!!canAdmin&&canWrite}/>}
         {tab === 'code' && <ProjectSource key={project.id} projectId={project.id} work={work} canAdmin={!!canAdmin&&canWrite}/> }
       </> : !loading && !error && <Empty icon={<FolderGit2 size={30}/>} title="Проект недоступен" text="Проверьте ссылку и своё членство в проекте."/>}</>}
+      {view==='notifications'&&<Notifications/>}
       {view === 'integrations' && <><div className="page-heading"><div><span className="eyebrow">СОСТОЯНИЕ ПЛАТФОРМЫ</span><h1>Интеграции</h1><p>Работающие возможности и границы локальной альфы.</p></div></div><IntegrationStatus/></>}
       {view === 'team' && <WorkspaceTeam invite={()=>setModal('invite')}/> }
       {view === 'docs' && <Docs/>}
@@ -198,7 +201,7 @@ export function App() {
         if (modal === 'handoff') await workAction('handoff', { summary: formText(data, 'summary'), to_user_id: formText(data, 'to_user_id') });
         if (modal === 'request' && work) { const intent=requireWorkIntent(workIntent,work); await api(`/work-sessions/${intent.id}/transfer-requests`, 'POST', { note: formText(data, 'note') }); await done('Запрос передачи отправлен'); }
         if (modal === 'member' && project) { await api(`/projects/${project.id}/members`, 'POST', { login: formText(data, 'login'), role: formText(data, 'role') }); await done('Участник добавлен'); }
-        if (modal === 'agent' && project) { const r = await api(`/projects/${project.id}/agents`, 'POST', { name: formText(data, 'name'), scopes: formText(data, 'scope') === 'write' ? ['read', 'write'] : ['read'], hours: Number(data.get('hours')) }); await reload(); showSecret('Токен агента', r.token, 'Скопируйте в защищённое хранилище. Повторно токен не отображается. Доступ ограничен этим проектом.'); }
+        if (modal === 'agent' && project) { const r = await api(`/projects/${project.id}/agents`, 'POST', { name: formText(data, 'name'), scopes: formText(data, 'scope') === 'write' ? ['read', 'write'] : ['read'], hours: Number(data.get('hours')) }); await reload(); showSecret('Токен агента', r.token, 'Скопируйте в защищённое хранилище. Повторный просмотр доступен только создателю во вкладке ИИ-агенты. Доступ ограничен этим проектом.'); }
       }}>
         {(modal === 'project'||modal==='import') && <><Field label="Название проекта"><input name="name" required maxLength={100} placeholder="Например, панель управления" autoFocus/></Field><Field label="Идентификатор" hint="Латинские буквы, цифры и дефис. Минимум 2 символа."><input name="slug" required pattern="[a-z0-9][a-z0-9-]+" minLength={2} maxLength={60} placeholder="control-panel"/></Field><Field label="Описание"><textarea name="description" maxLength={2000} placeholder="Для чего нужен проект и что важно знать команде"/></Field>{modal==='import'&&<Field label="Исходный проект — ZIP" hint="Без .env, ключей, .git и node_modules. Корневая папка внутри архива поддерживается."><input name="archive" type="file" accept=".zip,application/zip" required/></Field>}</>}
         {modal==='projectedit'&&project&&<><Field label="Название"><input name="name" required maxLength={100} defaultValue={project.name}/></Field><Field label="Описание"><textarea name="description" maxLength={2000} rows={5} defaultValue={project.description}/></Field><label className="checkbox-field"><input name="archived" type="checkbox" defaultChecked={!!(project as any).archived_at}/>Проект в архиве (можно восстановить)</label><p className="muted">Архивирование завершает активную работу и отзывает токены агентов проекта.</p></>}

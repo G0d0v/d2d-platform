@@ -108,3 +108,42 @@ CLI печатает ключ в stderr до отправки. В stdout нах�
 Поддерживаются `initialize`, `ping`, `tools/list`, `tools/call`. Версии протокола: 2025-11-25, 2025-06-18 и 2025-03-26. Инструменты: `projects`, `project_context`, `tasks`, `source_versions`, `git_status`, `start_work`, `heartbeat`, `finish_work`, `git_snapshot`, `installation_command`. Только чтение скрывает мутации из списка и не разрешает их прямой вызов. Ключ `idempotency_key` обязателен для повторяемых мутаций. Команда установки выдаётся один раз; её ответ содержит секрет.
 
 Реализация следует [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) и [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
+## Этапы разработки и запрос остановки (0.5)
+
+После получения собственной сессии отправляйте отчёты между существенными действиями:
+
+```http
+POST /api/v1/projects/PROJECT_ID/agent-steps
+Authorization: Bearer TOKEN
+Idempotency-Key: STEP_UUID
+Content-Type: application/json
+
+{"generation":42,"state":"working","stage":"Проверки","message":"Запущен набор API-тестов","progress":70}
+```
+
+Состояния: `working`, `waiting`, `completed`, `failed`, `stopped`. В ответе проверьте `stop_requested`; при `true` прекратите новые изменения, сохраните контекст и передайте `state=stopped`. Между длинными этапами вызывайте `GET /projects/PROJECT_ID/agent-activity` и проверяйте запрос остановки своей текущей сессии. Отзыв токена и устаревшее поколение запрещают дальнейшие записи независимо от инструкции клиента.
+
+Через MCP доступны `agent_activity` и `report_step`. Отчёт с одним ключом намерения и тем же телом не дублируется. Новый этап использует новый ключ. Не передавайте токены, секретные команды, переменные окружения и скрытые рассуждения в поле `message`.
+
+## Как редактировать проект непосредственно в репозитории D2D
+
+1. Получите `/projects/ID/agent-context`. Проверьте реальную возможность `git_write` и полномочия токена.
+2. Начните рабочую сессию; сохраните `id`, `generation` и `branch`.
+3. Получите `/projects/ID/git` и используйте выданный `clone_url`. Git-логин `d2d`, пароль — токен. Передавайте секрет через менеджер учётных данных или защищённый credential helper; не помещайте его в remote URL, аргументы команд и коммит.
+4. Создайте/выберите ветку **из ответа сессии**, внесите изменения и выполните проверки.
+5. При push добавьте заголовок `X-Work-Generation: GENERATION`, например `git -c http.extraHeader="X-Work-Generation: 42" push origin HEAD:WORK_BRANCH`. Сам токен берётся из credential helper.
+6. Создайте `POST /projects/ID/git/pulls` с `head`, `base`, `title`, `body`, заголовками `Idempotency-Key` и `X-Work-Generation`. В описание включите результат проверок.
+7. Дождитесь проверки другого участника. Не выдавайте собственное одобрение за независимый review.
+8. Сохраните итог, ссылки на коммиты и следующие шаги. Завершите сессию после публикации всех нужных результатов; выданные её агентом установочные полномочия после завершения прекращаются.
+
+D2D хранит ваш Git-код и координирует доступ. Вычисления клиента ИИ выполняются в его рабочей среде; встроенного запуска произвольной модели на сервере D2D нет.
+
+## История и откат
+
+- `GET /projects/ID/git/file-metadata?ref=BRANCH&path=DIR&page=1` — даты добавления/обновления и последний коммит по файлам.
+- `GET /projects/ID/git/file-history?ref=BRANCH&path=FILE&page=1` — история файла с переименованиями.
+- `GET /projects/ID/git/commit-diff?sha=SHA` — красно-зелёный diff всего коммита.
+- `POST /projects/ID/git/revert` — тело `sha`, `ref`, `expected_head`, `generation`; нужен `X-Work-Generation`. Можно отменить только свои изменения или изменения своего агента, зарегистрированные D2D. Результат — новый коммит рабочей ветки.
+
+API возвращает `409`, если ветка или сессия изменилась, либо возник конфликт Git. Прочитайте актуальное состояние; не подставляйте новое поколение автоматически в старое намерение.

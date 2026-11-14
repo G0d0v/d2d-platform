@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import {collaborationSchema} from './schema-v6.ts';
 
 export type Row = Record<string, any>;
 export interface SQL { query<T extends Row = Row>(sql: string, params?: any[]): Promise<{ rows: T[] }>; }
@@ -122,9 +123,10 @@ async function agentInstallations(tx:SQL){
 }
 
 async function gitSchema(tx:SQL){
-  if((await tx.query('SELECT version FROM migrations WHERE version=5')).rows.length)return;
+  if((await tx.query('SELECT version FROM migrations WHERE version=5')).rows.length){await collaborationSchema(tx);return;}
   await tx.query('ALTER TABLE artifacts ADD COLUMN commit_sha text');
   await tx.query(`CREATE TABLE git_changes (project_id text NOT NULL REFERENCES projects(id),number integer NOT NULL,author_id text NOT NULL,author_user_id text NOT NULL REFERENCES users(id),created_at bigint NOT NULL,PRIMARY KEY(project_id,number))`);
   await tx.query(`CREATE TABLE git_reviews (id text PRIMARY KEY,project_id text NOT NULL REFERENCES projects(id),number integer NOT NULL,reviewer_id text NOT NULL REFERENCES users(id),head_sha text NOT NULL,state text NOT NULL,body text NOT NULL,created_at bigint NOT NULL)`);
   await tx.query('INSERT INTO migrations VALUES (5,$1)',[Date.now()]);
+  await collaborationSchema(tx);
 }

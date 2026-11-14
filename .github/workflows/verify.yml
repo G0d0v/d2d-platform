@@ -1,0 +1,26 @@
+name: Проверка D2D
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Проверка серверных скриптов
+        run: |
+          bash -n install.sh scripts/container-entrypoint.sh scripts/host-connect.sh scripts/project-installer.sh
+          python3 -m py_compile scripts/host-runner.py

@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {Plus,Search} from 'lucide-react';
+import {Discussion} from './Discussion.tsx';
 import {api} from './api.ts';
 import {ActionForm,Empty,ErrorBox,Field,Modal} from './components.tsx';
 import type {Task,Work} from '../../server/contracts.ts';
@@ -13,6 +14,7 @@ export function ProjectTasks({projectId,work,userId,canWrite,changed}:{projectId
   const sequence=useRef(0);
   async function load(){const n=++sequence.current;setLoading(true);try{const r=await api(`/projects/${projectId}/tasks?page=${page}&q=${encodeURIComponent(q)}&state=${status}&archived=${archived}`);if(n!==sequence.current)return;setItems(r.data);setTotal(r.pagination.total);setError(null);}catch(e){if(n===sequence.current)setError(e as Error);}finally{if(n===sequence.current)setLoading(false);}}
   useEffect(()=>{void load();},[projectId,page,q,status,archived]);
+  useEffect(()=>{const target=new URLSearchParams(location.hash.split('?')[1]??'').get('discussion');if(target)void api(`/tasks/${encodeURIComponent(target)}`).then(r=>{if(r.task.project_id===projectId)open(r.task);}).catch(setError);},[items.map(t=>t.id).join(',')]);
   useEffect(()=>{setPage(1);},[q,status,archived,projectId]);
   function open(task:Task|null){setEdit({task,intent:captureWork(work)});}
   const cards=(tasks:Task[])=>tasks.map(t=><button key={t.id} className="task-card task-open" onClick={()=>open(t)}><span className={`priority ${t.priority}`}>{t.priority==='high'?'Высокий приоритет':t.priority==='low'?'Низкий приоритет':'Обычный приоритет'}</span><h4>{t.title}</h4><p className="task-excerpt">{t.description||'Описание не добавлено'}</p><span className={`task-status ${t.status}`}>{statuses[t.status]}</span></button>);
@@ -25,6 +27,6 @@ export function ProjectTasks({projectId,work,userId,canWrite,changed}:{projectId
       if(edit.task){const intent=requireWorkIntent(edit.intent,work);await api(`/tasks/${edit.task.id}`,'PATCH',{...body,status:data.get('status'),archived:data.get('archived')==='on',generation:intent.generation},{'If-Match':String(edit.task.version)});}
       else await api(`/projects/${projectId}/tasks`,'POST',body);
       setEdit(null);await load();changed();
-    }}><Field label="Название"><input name="title" required maxLength={200} defaultValue={edit.task?.title??''} readOnly={!canWrite}/></Field><Field label="Описание, критерии готовности и результат"><textarea name="description" rows={9} maxLength={10000} defaultValue={edit.task?.description??''} readOnly={!canWrite}/></Field><Field label="Приоритет"><select name="priority" defaultValue={edit.task?.priority??'normal'} disabled={!canWrite}><option value="normal">Обычный</option><option value="high">Высокий</option><option value="low">Низкий</option></select></Field>{edit.task&&<><Field label="Статус"><select name="status" defaultValue={edit.task.status} disabled={!mine}>{Object.entries(statuses).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></Field><label className="checkbox-field"><input type="checkbox" name="archived" defaultChecked={!!(edit.task as any).archived_at} disabled={!mine}/>В архиве (можно восстановить)</label>{!mine&&<p className="form-intro">Чтобы сохранить изменения, закройте карточку, возьмите проект в разработку и откройте задачу снова.</p>}</>}</ActionForm></Modal>}
+    }}><Field label="Название"><input name="title" required maxLength={200} defaultValue={edit.task?.title??''} readOnly={!canWrite}/></Field><Field label="Описание, критерии готовности и результат"><textarea name="description" rows={9} maxLength={10000} defaultValue={edit.task?.description??''} readOnly={!canWrite}/></Field><Field label="Приоритет"><select name="priority" defaultValue={edit.task?.priority??'normal'} disabled={!canWrite}><option value="normal">Обычный</option><option value="high">Высокий</option><option value="low">Низкий</option></select></Field>{edit.task&&<><Field label="Статус"><select name="status" defaultValue={edit.task.status} disabled={!mine}>{Object.entries(statuses).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></Field><label className="checkbox-field"><input type="checkbox" name="archived" defaultChecked={!!(edit.task as any).archived_at} disabled={!mine}/>В архиве (можно восстановить)</label>{!mine&&<p className="form-intro">Чтобы сохранить изменения, закройте карточку, возьмите проект в разработку и откройте задачу снова.</p>}</>}</ActionForm>{edit.task&&<Discussion projectId={projectId} type="task" subject={edit.task.id} userId={userId} canWrite={canWrite}/>}</Modal>}
   </>;
 }

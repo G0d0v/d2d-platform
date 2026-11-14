@@ -1,0 +1,61 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {database} from './db.ts';
+import {createApp} from './app.ts';
+
+test('обсуждения, уведомления, зашифрованные токены, шаги агента и исполнитель серверов',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'d2d-operations-')),db=await database(),app=await createApp({db,dataDir:dir,registration:'open'});
+ const call=(c:any,method:any,path:string,payload?:any,headers={})=>app.inject({method,url:'/api/v1'+path,payload,headers:{...c,'idempotency-key':randomUUID(),...headers}});
+ async function account(login:string){const r=await call({},'POST','/auth/register',{login,display_name:login,password:'operations-safe-password-123'});assert.equal(r.statusCode,200,r.body);return {id:r.json().user.id,headers:{cookie:`d2d_session=${r.cookies[0].value}`,'x-csrf-token':r.json().csrf}};}
+ const ok=(r:any)=>{assert.equal(r.statusCode,200,r.body);return r.json();};
+ try{
+  const a=await account('opsowner'),b=await account('opsdev'),v=await account('opsviewer');
+  const p=ok(await call(a.headers,'POST','/projects',{name:'Operations',slug:'operations'})).project;
+  for(const [user,role] of [[b,'developer'],[v,'viewer']] as const)ok(await call(a.headers,'POST',`/projects/${p.id}/members`,{login:user===b?'opsdev':'opsviewer',role}));
+  const t=ok(await call(a.headers,'POST',`/projects/${p.id}/tasks`,{title:'Обсудить релиз'})).task;
+  assert.equal(ok(await call(b.headers,'GET',`/tasks/${t.id}`)).task.id,t.id);
+  const agent=ok(await call(a.headers,'POST',`/projects/${p.id}/agents`,{name:'Agent',scopes:['read','write'],hours:1})),ag={authorization:'Bearer '+agent.token};
+  for(let i=0;i<2;i++)assert.equal(ok(await call(a.headers,'POST',`/agents/${agent.id}/token`,{})).token,agent.token);
+  const cipher=(await db.query('SELECT token_cipher FROM agents WHERE id=$1',[agent.id])).rows[0].token_cipher;
+  assert.ok(cipher);assert.ok(!cipher.includes(agent.token));
+  assert.equal((await call(b.headers,'POST',`/agents/${agent.id}/token`,{})).statusCode,404);
+  assert.equal((await call(ag,'POST',`/agents/${agent.id}/token`,{})).statusCode,403);
+  await db.query('UPDATE agents SET token_cipher=NULL WHERE id=$1',[agent.id]);
+  assert.equal((await call(a.headers,'POST',`/agents/${agent.id}/token`,{})).statusCode,409);
+  ok(await call(ag,'GET','/me'));assert.equal(ok(await call(a.headers,'POST',`/agents/${agent.id}/token`,{})).token,agent.token);
+  const f=ok(await call(b.headers,'POST',`/projects/${p.id}/discussion-files`,{filename:'review.txt',content:Buffer.from('Review notes').toString('base64')}));
+  const comment=ok(await call(b.headers,'POST',`/projects/${p.id}/comments`,{type:'task',subject:t.id,body:'@opsowner Проверка готова',attachments:[f.id]}));
+  assert.equal((await call(v.headers,'POST',`/projects/${p.id}/comments`,{type:'task',subject:t.id,body:'Forbidden'})).statusCode,403);
+  assert.equal((await call(a.headers,'POST',`/projects/${p.id}/comments/update`,{comment_id:comment.id,body:'Not mine'})).statusCode,403);
+  ok(await call(b.headers,'POST',`/projects/${p.id}/comments/update`,{comment_id:comment.id,body:'Исправленный комментарий'}));
+  const list=ok(await call(a.headers,'GET',`/projects/${p.id}/comments?type=task&subject=${t.id}`));assert.equal(list.data[0].revisions.length,1);assert.equal(list.data[0].attachments[0].id,f.id);
+  const download=await app.inject({url:`/api/v1/discussion-files/${f.id}/download`,headers:a.headers});assert.equal(download.body,'Review notes');
+  const notices=ok(await call(a.headers,'GET','/me/notifications?unread=true'));assert.equal(notices.unread,1);
+  ok(await call(a.headers,'POST','/me/notifications/read',{id:notices.data[0].id}));assert.equal(ok(await call(a.headers,'GET','/me/notifications')).unread,0);
+  const w=ok(await call(ag,'POST',`/projects/${p.id}/work-sessions`,{note:'Работа агента'})).work;
+  const step={generation:w.generation,state:'working',stage:'Тесты',message:'Проверены права',progress:70},key=randomUUID();
+  ok(await call(ag,'POST',`/projects/${p.id}/agent-steps`,step,{'idempotency-key':key}));ok(await call(ag,'POST',`/projects/${p.id}/agent-steps`,step,{'idempotency-key':key}));
+  assert.equal(ok(await call(a.headers,'GET',`/projects/${p.id}/agent-activity`)).steps.length,1);
+  ok(await call(a.headers,'POST',`/projects/${p.id}/agent-stop`,{agent_id:agent.id,generation:w.generation}));assert.equal(ok(await call(ag,'POST',`/projects/${p.id}/agent-steps`,{...step,state:'stopped'})).stop_requested,true);
+  const host=ok(await call(a.headers,'POST',`/projects/${p.id}/managed-hosts`,{name:'Test host'})),raw=host.command.match(/D2D_HOST_TOKEN='([^']+)'/)[1],machine='a'.repeat(32),hh={authorization:'Bearer '+raw,'x-d2d-machine':machine};
+  const poll=()=>app.inject({method:'POST',url:`/api/hosts/${host.id}/poll`,headers:hh,payload:{machine_id:machine,hostname:'test',state:'healthy',message:'token=hidden-value'}});
+  ok(await poll());
+  const artifact=randomUUID();await db.query('INSERT INTO artifacts (id,project_id,filename,sha256,bytes,files,recipe,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[artifact,p.id,'test.zip','0'.repeat(64),1,'[]',JSON.stringify({type:'dockerfile',root:'',path:'Dockerfile',port:3000}),a.id,Date.now()]);
+  const cmd=ok(await call(a.headers,'POST',`/projects/${p.id}/host-commands`,{host_id:host.id,action:'update',artifact_id:artifact}));
+  const first=ok(await poll()).command;assert.equal(first.id,cmd.id);
+  const wrong=await app.inject({method:'POST',url:`/api/hosts/${host.id}/poll`,headers:{...hh,'x-d2d-machine':'b'.repeat(32)},payload:{machine_id:'b'.repeat(32),hostname:'wrong',state:'healthy'}});assert.equal(wrong.statusCode,403);
+  const result={command_id:cmd.id,lease:first.lease,state:'succeeded',message:'password=private'};
+  for(let i=0;i<2;i++)ok(await app.inject({method:'POST',url:`/api/hosts/${host.id}/result`,headers:hh,payload:result}));
+  const hosts=ok(await call(a.headers,'GET',`/projects/${p.id}/managed-hosts`));assert.equal(hosts.hosts[0].artifact_id,artifact);assert.ok(!hosts.commands[0].message.includes('private'));assert.ok(!hosts.hosts[0].message.includes('hidden-value'));
+  ok(await call(a.headers,'POST',`/work-sessions/${w.id}/handoff`,{generation:w.generation,to_user_id:a.id,summary:'Передача'}));
+  assert.equal((await call(ag,'POST',`/projects/${p.id}/agent-steps`,step,{'idempotency-key':key})).statusCode,409);
+  await db.query('DELETE FROM members WHERE project_id=$1 AND user_id=$2',[p.id,a.id]);
+  assert.equal((await call(a.headers,'POST',`/agents/${agent.id}/token`,{})).statusCode,404);
+  assert.equal((await call(a.headers,'GET','/me/notifications')).json().data.length,0);
+  assert.equal((await poll()).statusCode,401);
+ }finally{await app.close();await db.close();await rm(dir,{recursive:true,force:true});}
+});

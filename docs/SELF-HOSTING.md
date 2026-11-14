@@ -1,0 +1,93 @@
+# Самостоятельное размещение D2D
+
+Эта инструкция устанавливает **саму платформу**, включая приватный Forgejo. Для установки приложения из проекта смотрите [INSTALLATION.md](INSTALLATION.md).
+
+## Требования
+
+Ubuntu 24.04/26.04 или Debian 12/13, root/sudo, amd64 или arm64, от 2 ГБ RAM и 10 ГБ свободного диска. Сборке нужен исходящий HTTPS к GitHub, npm, Docker Hub и Codeberg. Домен должен указывать на сервер, порты 80/443 — быть свободными и доступны извне. Настройки firewall установщик не меняет.
+
+## Установка
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/G0d0v/d2d-platform/main/install.sh | sudo bash -s -- --domain code.example.org
+```
+
+Установщик скачивает архив фиксированного релиза и `SHA256SUMS`, проверяет архив, собирает образ и запускает Docker Compose. Forgejo 17.0.1 загружается из официального релиза с закреплённой SHA-256 для выбранной архитектуры. Caddy получает сертификат HTTPS. Образ содержит Node.js, Git, D2D и Forgejo; Docker socket внутрь приложения не передаётся.
+
+Результат: адрес и код первоначальной настройки. Создайте первый аккаунт, сохраните его резервный код вне сервера, затем выдайте приглашения. Код настройки лежит в `/opt/d2d-community/runtime.env`, файл доступен только root. Для регистрации последующих пользователей нужны приглашения.
+
+| Место | Содержимое |
+|---|---|
+| `/opt/d2d-community/releases/v0.5.0` | Исходники установленной версии |
+| `/opt/d2d-community/compose.yaml` | Настройка контейнеров и образа |
+| `/opt/d2d-community/runtime.env` | Публичный адрес и код настройки |
+| Docker volume `d2d-community_data` | Проекты, архивы, вложения, ключ токенов и весь Forgejo |
+| Docker volume `d2d-community_postgres_data` | PostgreSQL 18, аккаунты, права, обсуждения и события |
+| Docker volumes `d2d-community_caddy_data`, `d2d-community_caddy_config` | Сертификаты и состояние Caddy |
+
+Forgejo слушает `127.0.0.1:3001` **внутри контейнера**. Снаружи доступны только D2D и Caddy; отдельная регистрация Forgejo, SMTP, SSH и Actions отключены. Аккаунты и данные платформы обслуживает отдельный PostgreSQL 18 в приватной сети Compose; его порт наружу не публикуется. PGlite используется только в локальном запуске без `DATABASE_URL`.
+
+## Локальная проверка без домена
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/G0d0v/d2d-platform/main/install.sh | sudo bash -s -- --local 19100
+```
+
+Доступ только через loopback. Со своего компьютера:
+
+```bash
+ssh -L 19100:127.0.0.1:19100 root@SERVER_IP
+```
+
+Откройте `http://127.0.0.1:19100`. Для перехода на домен измените `PUBLIC_ORIGIN`, настройте Caddy и перезапустите Compose; адреса в уже выданных командах установки потребуется получить заново.
+
+## Проверка и диагностика
+
+```bash
+cd /opt/d2d-community
+sudo docker compose ps
+sudo docker compose logs --tail 100 app
+curl -fsS https://code.example.org/health
+```
+
+Ожидаемый ответ `/health`: `{"ok":true}`. В интерфейсе создайте тестовый проект, загрузите ZIP и откройте вкладку «Код»: должны появиться файлы и Git-коммит. Проверка `/health` подтверждает доступность D2D и БД; работоспособность Git проверяйте отдельно этим сценарием.
+
+Если сборка прервалась, повторите `docker compose up -d --build --wait --wait-timeout 300` из каталога установки. Данные не удаляйте. Повтор запуска bootstrap при существующем `runtime.env` останавливается с адресом инструкции, чтобы случайно не перезаписать настройки.
+
+## Резервная копия
+
+Копируйте одновременно базу, Git, архивы, вложения и `token-vault.key`. Без ключа повторный просмотр сохранённых токенов невозможен. В копии присутствуют секреты: храните её с правами 600, шифруйте при передаче и проверяйте восстановление на отдельном экземпляре.
+
+Пример согласованной копии PostgreSQL и Forgejo с краткой остановкой приложения. Выполняйте из root-shell:
+
+```bash
+cd /opt/d2d-community
+mkdir -p backups
+chmod 700 backups
+stamp=$(date -u +%Y%m%d-%H%M%S)
+docker compose stop app
+trap 'docker compose start app' EXIT
+set -e
+docker compose exec -T db pg_dump -U d2d -d d2d -Fc > "backups/db-$stamp.dump"
+docker run --rm -v d2d-community_data:/data:ro -v "$PWD/backups:/backup" busybox:1.37 sh -c "tar -czf /backup/data-$stamp.tar.gz -C /data ."
+files=(runtime.env compose.yaml)
+[[ ! -f Caddyfile ]] || files+=(Caddyfile)
+tar -czf "backups/config-$stamp.tar.gz" "${files[@]}"
+chmod 600 backups/*
+docker compose start app
+trap - EXIT
+```
+
+Проверяйте код завершения копирования и наличие всех трёх файлов до удаления старых копий. Не запускайте `docker compose down -v`: эта команда удаляет данные.
+
+Для восстановления подготовьте **новые пустые volumes**. Восстановите дамп PostgreSQL через `pg_restore -U d2d -d d2d --no-owner`, а в volume приложения распакуйте весь `data`-архив с сохранением владельца UID 1000. Подключите их к той же версии D2D и PostgreSQL 18. Сначала проверьте аккаунты, проекты, Git и расшифровку токена на изолированном адресе. Рабочие volumes не перезаписывайте до проверки копии.
+
+## Обновление и возврат версии
+
+1. Сделайте согласованную резервную копию.
+2. Скачайте архив нового релиза и его `SHA256SUMS`, проверьте SHA-256.
+3. Распакуйте в **новый** каталог `releases/VERSION`, соберите образ с отдельным тегом.
+4. Измените `build` и `image` сервиса `app` в `compose.yaml`, сохраняя volume и `runtime.env`.
+5. Выполните `docker compose up -d --build --wait --wait-timeout 300`, проверьте `/health`, вход и Git.
+
+Не перезаписывайте исходники работающего релиза. Миграции выполняются при старте. Возврат образа допустим только при совместимости схемы; иначе восстановите согласованную копию в отдельный volume. Код и данные откатываются по разным правилам.

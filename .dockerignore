@@ -1,0 +1,10 @@
+node_modules
+.d2d
+.git
+.env
+.env.*
+dist
+*.log
+
+__pycache__
+*.pyc

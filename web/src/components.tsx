@@ -17,13 +17,13 @@ export function Modal({ title, children, close, trackChanges = true }: { title: 
   useEffect(() => { dirty.current = false;if(ref.current)delete ref.current.dataset.dirty; setConfirmClose(false); }, [title]);
   function requestClose() {
     if (ref.current?.querySelector('fieldset')?.disabled) return;
-    if (dirty.current) setConfirmClose(true); else close();
+    if (dirty.current||ref.current?.querySelector('[data-dirty="true"]')) setConfirmClose(true); else close();
   }
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if (dirty.current) { event.preventDefault(); event.returnValue = ''; } };
+    const warn = (event: BeforeUnloadEvent) => { if (dirty.current||ref.current?.querySelector('[data-dirty="true"]')) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, []);
-  return <dialog ref={ref} onInputCapture={() => { if(trackChanges){dirty.current = true;if(ref.current)ref.current.dataset.dirty='true';} }} onCancel={e => { e.preventDefault(); requestClose(); }} onClick={e => { if (e.target === ref.current) requestClose(); }} aria-labelledby="dialog-title">
+  return <dialog ref={ref} onInputCapture={event => { if(trackChanges&&!(event.target as HTMLElement).closest('.discussion')){dirty.current = true;if(ref.current)ref.current.dataset.dirty='true';} }} onCancel={e => { e.preventDefault(); requestClose(); }} onClick={e => { if (e.target === ref.current) requestClose(); }} aria-labelledby="dialog-title">
     <div className="dialog-heading"><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="Закрыть окно" onClick={requestClose}><X size={20}/></button></div>
     {confirmClose && <div className="discard-draft" role="alert"><p>В форме есть несохранённые изменения. Закрыть её и потерять черновик?</p><div className="dialog-actions"><button className="button" onClick={() => setConfirmClose(false)}>Вернуться к форме</button><button className="button primary" onClick={close}>Закрыть без сохранения</button></div></div>}
     <div hidden={confirmClose}><ModalClose.Provider value={requestClose}>{children}</ModalClose.Provider></div>
@@ -51,6 +51,6 @@ export function Secret({ value, label }: { value: string; label: string }) {
 export function Empty({ icon, title, text, children }: { icon: ReactNode; title: string; text: string; children?: ReactNode }) {
   return <div className="empty"><div className="empty-icon">{icon}</div><h3>{title}</h3><p>{text}</p>{children}</div>;
 }
-export const date = (n: number) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(Number(n));
+export const date = (n: number) => new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', year:'numeric', hour: '2-digit', minute: '2-digit' }).format(Number(n));
 export const initials = (s: string) => s.split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase();
 export function Avatar({ name, small = false }: { name: string; small?: boolean }) { return <span className={`avatar ${small ? 'tiny' : ''}`} aria-label={name}>{initials(name)}</span>; }

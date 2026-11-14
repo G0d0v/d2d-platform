@@ -64,8 +64,13 @@ test('настоящий Forgejo: clone/push, ветки, PR, review, merge, р�
     const tree=await call(agent,'GET',`/projects/${p.id}/git/tree?ref=main`);assert.equal(tree.statusCode,200,tree.body);assert.equal(tree.json().entries.length,2);
     assert.equal((await call(agent,'GET',`/projects/${p.id}/git/raw?ref=main&path=README.md`)).body,'# Initial code\n');
     await run(['checkout','-b',w.branch]);await writeFile(join(checkout,'README.md'),'# Updated code\n');await run(['add','README.md']);await run(['-c','user.name=Test','-c','user.email=test@local.invalid','commit','-m','Update']);await run(['push','origin',w.branch]);
+    const meta=await call(agent,'GET',`/projects/${p.id}/git/file-metadata?ref=${encodeURIComponent(w.branch)}`);assert.equal(meta.statusCode,200,meta.body);assert.ok(meta.json().files.find((f:any)=>f.path==='README.md').added_at);
+    const history=await call(agent,'GET',`/projects/${p.id}/git/file-history?ref=${encodeURIComponent(w.branch)}&path=README.md`);assert.equal(history.statusCode,200,history.body);assert.equal(history.json().commits.length,2);assert.equal(history.json().commits[0].owned_by_me,true);
+    const change=await call(agent,'GET',`/projects/${p.id}/git/commit-diff?sha=${history.json().commits[0].sha}`);assert.equal(change.statusCode,200,change.body);assert.match(change.body,/^-# Initial code/m);assert.match(change.body,/^\+# Updated code/m);
     const h={'x-work-generation':String(gen)},pr=await call(agent,'POST',`/projects/${p.id}/git/pulls`,{title:'Review code',body:'Verified locally',head:w.branch,base:'main'},h);assert.equal(pr.statusCode,200,pr.body);const pull=pr.json().pull;
     const diff=await call(agent,'GET',`/projects/${p.id}/git/diff?number=${pull.number}`);assert.equal(diff.statusCode,200,diff.body);assert.match(diff.body,/Updated code/);
+    const comment=await call(reviewer.headers,'POST',`/projects/${p.id}/comments`,{type:'pull',subject:String(pull.number),body:'Проверка строки',file_path:'README.md',head_sha:pull.head.sha,line:1,side:'after'});assert.equal(comment.statusCode,200,comment.body);
+    const staleComment=await call(reviewer.headers,'POST',`/projects/${p.id}/comments`,{type:'pull',subject:String(pull.number),body:'Устаревший diff',file_path:'README.md',head_sha:'0'.repeat(40),line:1,side:'after'});assert.equal(staleComment.statusCode,409);
     const review={number:pull.number,head_sha:pull.head.sha,state:'approved',body:'Reviewed'};
     assert.equal((await call(owner.headers,'POST',`/projects/${p.id}/git/reviews`,review)).statusCode,403);
     assert.equal((await call(reviewer.headers,'POST',`/projects/${p.id}/git/reviews`,review)).statusCode,200);
@@ -77,6 +82,9 @@ test('настоящий Forgejo: clone/push, ветки, PR, review, merge, р�
     const issue=await call(owner.headers,'POST',`/artifacts/${f.id}/installations`,{});assert.equal(issue.statusCode,200,issue.body);
     const raw=issue.json().command.match(/D2D_INSTALL_TOKEN='([^']+)'/)[1],claim=await app.inject({method:'POST',url:`/api/install/${issue.json().id}/claim`,payload:{host:'test-git-server'},headers:{authorization:'Bearer '+raw}});assert.equal(claim.statusCode,200,claim.body);
     const imported=await call(owner.headers,'POST',`/projects/${p.id}/git/import`,{artifact_id:f.id,message:'Import existing snapshot'},{'x-work-generation':String(next.generation)});assert.equal(imported.statusCode,200,imported.body);
+    const currentHistory=(await call(owner.headers,'GET',`/projects/${p.id}/git/file-history?ref=${encodeURIComponent(next.branch)}&path=README.md`)).json();
+    const reverted=await call(owner.headers,'POST',`/projects/${p.id}/git/revert`,{sha:pull.head.sha,ref:next.branch,expected_head:currentHistory.ref,generation:next.generation},{'x-work-generation':String(next.generation)});assert.equal(reverted.statusCode,200,reverted.body);
+    assert.equal((await call(owner.headers,'GET',`/projects/${p.id}/git/raw?ref=${encodeURIComponent(reverted.json().branch)}&path=README.md`)).body,'# Initial code\n');
     const p2=(await call(owner.headers,'POST','/projects',{name:'Auto Git ZIP',slug:'auto-git-zip'})).json().project;uploadedProject=p2.id;
     await run(['archive','--format=zip','-o',join(directory,'upload.zip'),'HEAD']);
     const auto=await call(owner.headers,'POST',`/projects/${p2.id}/source`,await readFile(join(directory,'upload.zip')),{'content-type':'application/zip'});assert.equal(auto.statusCode,200,auto.body);assert.match(auto.json().git.commit_sha,/^[a-f0-9]{40}$/);assert.equal(auto.json().git.branch,'main');

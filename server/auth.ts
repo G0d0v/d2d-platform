@@ -10,6 +10,7 @@ export async function authenticate(tx: SQL, req: FastifyRequest, mutation: boole
     const a = (await tx.query(`SELECT a.*, u.display_name, u.role FROM agents a JOIN users u ON u.id=a.owner_id
       WHERE a.token_hash=$1 AND a.revoked_at IS NULL AND a.expires_at>$2`, [digest(authorization.slice(7)), Date.now()])).rows[0];
     if (!a) throw new Problem(401, 'TOKEN_REVOKED', 'Токен недействителен, истёк или отозван');
+    await tx.query('UPDATE agents SET last_seen_at=$1 WHERE id=$2',[Date.now(),a.id]);
     return { id: a.id, userId: a.owner_id, name: `${a.name} · ${a.display_name}`, role: a.role,
       agentId: a.id, projectId: a.project_id, scopes: a.scopes };
   }

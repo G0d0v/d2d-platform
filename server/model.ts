@@ -1,9 +1,12 @@
 import type { SQL, Row } from './db.ts';
 import { id, Problem } from './security.ts';
+import {notify} from './notifications.ts';
 
 export interface Actor { id: string; userId: string; name: string; role: string; agentId?: string; projectId?: string; scopes: string[]; csrf?: string; sessionHash?: string; }
 export async function event(tx: SQL, actor: Actor, projectId: string | null, kind: string, message: string, detail: any = {}) {
-  await tx.query('INSERT INTO events VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id(), projectId, actor.id, actor.name, kind, message, JSON.stringify(detail), Date.now()]);
+  const eventId=id();
+  await tx.query('INSERT INTO events VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [eventId, projectId, actor.id, actor.name, kind, message, JSON.stringify(detail), Date.now()]);
+  if(projectId&&/^(work\.(started|finished|transferred|transfer_requested|request_resolved)|handoff\.|git\.(pull.created|review|merged)|host\.|agent\.stop)/.test(kind))await notify(tx,projectId,eventId,kind,message,`project/${projectId}/${kind.startsWith('git.')?'git/pulls':kind.startsWith('host.')?'code':'overview'}`,actor.userId);
 }
 export async function member(tx: SQL, actor: Actor, projectId: string, write = false): Promise<Row> {
   if (actor.agentId && actor.projectId !== projectId) throw new Problem(404, 'NOT_FOUND', 'Проект не найден');

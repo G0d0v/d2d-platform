@@ -13,8 +13,10 @@ import { choice,integer,object,text } from './contracts.ts';
 import { inspectArchive,archiveFileStream } from './archives.ts';
 import type {Forgejo} from './forgejo.ts';
 import {importSource} from './git-source.ts';
+import {recordOwnership} from './git-history.ts';
+import {notify} from './notifications.ts';
 
-export type Register=(method:HTTPMethods,path:string,summary:string,body:any,handler:(tx:SQL,a:Actor,req:any,reply:FastifyReply)=>Promise<any>,settings?:{idempotent?:boolean;bodyLimit?:number})=>void;
+export type Register=(method:HTTPMethods,path:string,summary:string,body:any,handler:(tx:SQL,a:Actor,req:any,reply:FastifyReply)=>Promise<any>,settings?:{idempotent?:boolean;bodyLimit?:number;authorize?:(tx:SQL,a:Actor,req:any)=>Promise<void>})=>void;
 export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Database,options:{dataDir?:string;origin?:string;git?:Forgejo}) {
   const blobs=resolve(options.dataDir??'.d2d','blobs');
   const blob=(sha:string)=>resolve(blobs,sha+'.zip');
@@ -51,6 +53,7 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
       if(repo.empty||w){
         const branch=repo.empty?'main':w.branch;
         const commit=await importSource(options.git,req.params.id,stored.artifact,blob(stored.artifact.sha256),resolve(options.dataDir??'.d2d','git-work'),branch,a,`Загрузка ${stored.artifact.filename}`);
+        await recordOwnership(tx,req.params.id,commit,a,w??{id:'archive:'+stored.artifact.id,generation:0});
         await tx.query('UPDATE artifacts SET commit_sha=$1 WHERE id=$2',[commit,stored.artifact.id]);stored.artifact.commit_sha=commit;
         await event(tx,a,req.params.id,'git.import','Загруженный архив записан в Git',{artifact_id:stored.artifact.id,commit_sha:commit,branch});sync={commit_sha:commit,branch};
       }else sync={pending:true,message:'Архив сохранён. Для записи следующей версии в Git возьмите проект в разработку и нажмите «Записать ZIP в Git».'};
@@ -108,6 +111,7 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
     await tx.query('SELECT id FROM control WHERE id=1 FOR UPDATE');const job=await installation(req,tx);if(job.host!==req.body.host)throw new Problem(409,'INSTALL_HOST_MISMATCH','Сервер не совпадает');
     if(['failed','installed'].includes(job.state)&&job.state!==req.body.state)throw new Problem(409,'INSTALL_TERMINAL','Результат установки уже сохранён');
     await tx.query('UPDATE installations SET state=$1,message=$2,updated_at=$3 WHERE id=$4',[req.body.state,req.body.message,Date.now(),job.id]);
+    await notify(tx,job.project_id,job.id,'install.result',req.body.state==='installed'?'Проект установлен на сервер':'Ошибка установки',`project/${job.project_id}/code`,'');
     await tx.query('INSERT INTO events VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',[id(),job.project_id,job.created_by,req.body.host,'install.result',req.body.state==='installed'?'Проект установлен на сервер':'Ошибка установки',JSON.stringify({installation_id:job.id,artifact_id:job.artifact_id,message:req.body.message}),Date.now()]);return {ok:true};
   }));
 }

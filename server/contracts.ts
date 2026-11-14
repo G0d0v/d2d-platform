@@ -26,6 +26,7 @@ const paginationSchema = responseObject({ page: integer(1, 1000000), page_size: 
 const paginated = (item: unknown) => responseObject({ data: arrayOf(item), pagination: paginationSchema });
 const auditSchema = responseObject({ id: text(), actor_id: text(), actor_name: text(), kind: text(), message: text(5000), created_at: timestamp, detail: { type: 'object', additionalProperties: true } });
 export function responseSchemaFor(method: string, path: string): any {
+  if(/comments|discussion-files|notifications|agent-activity|agent-steps|agent-stop|\/agents\/:id\/token|managed-hosts|host-commands/.test(path))return {type:'object',additionalProperties:true};
   if (['/me/work','/me/navigation','/me/attention','/me/security','/team'].includes(path)||path.includes('/git')||path.endsWith('/source')||path.startsWith('/artifacts/')) return {type:'object',additionalProperties:true};
   if (path === '/status') return responseObject({ registration: choice('open', 'invite'), setup: { type: 'boolean' } });
   if (['/auth/login', '/auth/register', '/auth/recover'].includes(path)) return responseObject({ user: userSchema, csrf: text(), recovery_code: text() }, path === '/auth/login' ? ['user', 'csrf'] : ['user', 'csrf', 'recovery_code']);
@@ -42,7 +43,7 @@ export function responseSchemaFor(method: string, path: string): any {
     permissions: responseObject({ role: text(), scopes: arrayOf(text()) }), capabilities: { type: 'object', additionalProperties: { type: 'boolean' } }, instructions: arrayOf(text()), tasks_url: text(), context_version: integer(0, 2147483647), observed_at: timestamp });
   if (path === '/projects/:id/agents') return responseObject({ id: text(), token: text(), expires_at: timestamp });
   if (path === '/invites') return responseObject({ invite: text(), expires_at: timestamp });
-  if (path === '/capabilities') return responseObject({ api_version: text(), work_sessions: { type: 'boolean' }, tasks: { type: 'boolean' }, agents: { type: 'boolean' }, forgejo: { type: 'boolean' }, git_write: { type: 'boolean' }, reviews: { type: 'boolean' }, builds: { type: 'boolean' }, releases: { type: 'boolean' }, deployments: { type: 'boolean' }, source_upload: { type: 'boolean' }, mcp: { type: 'boolean' } });
+  if (path === '/capabilities') return responseObject({ api_version: text(), work_sessions: { type: 'boolean' }, tasks: { type: 'boolean' }, agents: { type: 'boolean' }, forgejo: { type: 'boolean' }, git_write: { type: 'boolean' }, reviews: { type: 'boolean' }, builds: { type: 'boolean' }, releases: { type: 'boolean' }, deployments: { type: 'boolean' }, source_upload: { type: 'boolean' }, mcp: { type: 'boolean' },discussions:{type:'boolean'},notifications:{type:'boolean'},managed_hosts:{type:'boolean'},agent_activity:{type:'boolean'},file_history:{type:'boolean'},own_commit_revert:{type:'boolean'} });
   if (path.endsWith('/transfer-requests')) return responseObject({ id: text() });
   return responseObject({ ok: { type: 'boolean' } });
 }

@@ -17,6 +17,10 @@ import { registerSourceRoutes } from './source-routes.ts';
 import {Forgejo,type ForgejoOptions} from './forgejo.ts';
 import {registerGitRoutes} from './git-routes.ts';
 import {registerMcp} from './mcp.ts';
+import {tokenVault} from './token-vault.ts';
+import {registerCollaboration} from './collaboration.ts';
+import {registerAgentOperations} from './agent-operations.ts';
+import {registerManagedHosts} from './managed-hosts.ts';
 
 export interface AppOptions { db: Database; origin?: string; devOrigin?: string; registration?: 'open' | 'invite'; logger?: boolean; staticRoot?: string; setupToken?:string; dataDir?:string; forgejo?:ForgejoOptions; }
 type RequestData = { Body: Record<string, any>; Params: { id: string }; Querystring: { page?: string; q?: string; state?: string; archived?: string } };
@@ -29,12 +33,13 @@ export async function createApp(options: AppOptions) {
   const secure = origin.startsWith('https:');
   const git=options.forgejo?new Forgejo(options.forgejo):undefined;
   await migrate(db);
+  const vault=await tokenVault(options.dataDir??'.d2d');
   const app = Fastify({ trustProxy:'127.0.0.1', logger: options.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'] } : false,
     bodyLimit: 65536, ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
   await app.register(cookie);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(swagger, { openapi: { openapi: '3.0.3', info: {
-    title: 'D2D API', version: '0.3.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
+    title: 'D2D API', version: '0.5.0', description: 'Платформа закрытого сообщества разработчиков. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
     components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' }, session: { type: 'apiKey', in: 'cookie', name: 'd2d_session' } } } } });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
   app.addHook('onRequest', async (req, reply) => {
@@ -54,7 +59,7 @@ export async function createApp(options: AppOptions) {
     reply.status(status).send({ error: { code, message, details: e instanceof Problem ? e.details : undefined, retryable: status === 429, request_id: req.id } });
   });
 
-  function route(method: HTTPMethods, path: string, summary: string, body: any, handler: Handler, settings: { public?: boolean; idempotent?: boolean; authRate?: boolean;bodyLimit?:number } = {}) {
+  function route(method: HTTPMethods, path: string, summary: string, body: any, handler: Handler, settings: { public?: boolean; idempotent?: boolean; authRate?: boolean;bodyLimit?:number;authorize?:(tx:SQL,a:Actor,req:any)=>Promise<void> } = {}) {
     const mutation = !['GET', 'HEAD'].includes(method);
     const idem = mutation && settings.idempotent !== false;
     app.route<RequestData>({ method, url: `/api/v1${path}`, ...(settings.bodyLimit?{bodyLimit:settings.bodyLimit}:{}),config: settings.authRate ? { rateLimit: { max: 10, timeWindow: '1 minute' } } : {},
@@ -68,6 +73,8 @@ export async function createApp(options: AppOptions) {
         // Authentication is inside the same lock as mutation so revocation cannot race admission.
         if (mutation) await tx.query('SELECT id FROM control WHERE id=1 FOR UPDATE');
         const actor = settings.public ? {} as Actor : await authenticate(tx, req, mutation);
+        if(actor.agentId&&req.headers.authorization){const stored=(await tx.query('SELECT token_cipher FROM agents WHERE id=$1',[actor.agentId])).rows[0];if(stored&&!stored.token_cipher)await tx.query('UPDATE agents SET token_cipher=$1 WHERE id=$2 AND token_cipher IS NULL',[vault.seal(req.headers.authorization.slice(7),actor.agentId),actor.agentId]);}
+        if(settings.authorize)await settings.authorize(tx,actor,req);
         if (!idem) return handler(tx, actor, req, reply);
         const key = String(req.headers['idempotency-key']);
         const fingerprint = digest(canonical({ method, path: req.url, body: req.body ?? null, ifMatch: req.headers['if-match'] ?? null }));
@@ -139,7 +146,7 @@ export async function createApp(options: AppOptions) {
     user: publicUser((await tx.query('SELECT * FROM users WHERE id=$1', [a.userId])).rows[0]), csrf: a.csrf, agent_id: a.agentId, scopes: a.scopes,
   }));
   route('GET', '/capabilities', 'Реально реализованные возможности', null, async () => ({ api_version: 'v1', work_sessions: true, tasks: true, agents: true,
-    forgejo: !!git, git_write: !!git, reviews: !!git, builds: false, releases: !!git, deployments: true, source_upload:true, mcp: true }));
+    forgejo: !!git, git_write: !!git, reviews: !!git, builds: false, releases: !!git, deployments: true, source_upload:true, mcp: true, discussions:true, notifications:true, managed_hosts:true, agent_activity:true, file_history:!!git, own_commit_revert:!!git }));
   route('POST', '/invites', 'Пригласить коллегу, при необходимости сразу в проект', object({project_id:text(80),role:choice('admin','developer','viewer')},[]), async (tx, a,req) => {
     human(a); if(req.body.project_id) await admin(tx,a,req.body.project_id); else if (a.role !== 'owner') throw new Problem(403, 'FORBIDDEN', 'Приглашения создаёт владелец платформы или администратор проекта');
     const raw = token(), expires = Date.now() + 86400000;
@@ -216,7 +223,7 @@ export async function createApp(options: AppOptions) {
       events: (await tx.query('SELECT * FROM events WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100', [p(req)])).rows,
       handoffs: (await tx.query(`SELECT h.*,u.display_name AS requester_name FROM handoffs h JOIN users u ON u.id=h.requested_by JOIN work_sessions w ON w.id=h.session_id
         WHERE w.project_id=$1 AND h.state='pending' AND w.state IN ('active','paused','review') AND w.expires_at>$2 ORDER BY h.created_at`, [p(req), Date.now()])).rows,
-      agents: a.agentId || project.member_role !== 'admin' ? [] : (await tx.query('SELECT id,name,scopes,expires_at,revoked_at FROM agents WHERE project_id=$1 ORDER BY created_at DESC', [p(req)])).rows,
+      agents: a.agentId ? [] : (await tx.query('SELECT id,owner_id,name,scopes,expires_at,revoked_at FROM agents WHERE project_id=$1 ORDER BY created_at DESC', [p(req)])).rows,
     };
   });
   route('POST', '/projects/:id/members', 'Добавить зарегистрированного участника', object({ login: text(32), role: choice('admin', 'developer', 'viewer') }), async (tx, a, req) => {
@@ -227,6 +234,7 @@ export async function createApp(options: AppOptions) {
     await event(tx, a, p(req), 'member.added', `Добавлен участник ${req.body.login}`, { user_id: u.id, role: req.body.role });
     return { ok: true };
   });
+  route('GET','/tasks/:id','Карточка задачи по прямой ссылке',null,async(tx,a,req)=>{const task=(await tx.query('SELECT * FROM tasks WHERE id=$1',[req.params.id])).rows[0];if(!task)throw new Problem(404,'NOT_FOUND','Задача не найдена');await member(tx,a,task.project_id);return {task};});
   route('GET', '/projects/:id/tasks', 'Задачи проекта, по 50 на страницу', null, async (tx, a, req) => {
     await member(tx, a, p(req));
     const params:any[]=[p(req), req.query.archived==='true', `%${req.query.q??''}%`, req.query.state??'all'];
@@ -328,10 +336,11 @@ export async function createApp(options: AppOptions) {
     await event(tx, a, w.project_id, 'work.finished', 'Работа завершена, проект свободен', { summary: req.body.summary });
     return { ok: true };
   });
-  route('POST', '/projects/:id/agents', 'Выдать ограниченный токен агента, показывается один раз', object({ name: text(100), scopes: { type: 'array', items: choice('read', 'write'), minItems: 1, maxItems: 2, uniqueItems: true }, hours: integer(1, 720) }), async (tx, a, req) => {
+  route('POST', '/projects/:id/agents', 'Выдать ограниченный токен; создатель может просматривать его повторно', object({ name: text(100), scopes: { type: 'array', items: choice('read', 'write'), minItems: 1, maxItems: 2, uniqueItems: true }, hours: integer(1, 720) }), async (tx, a, req) => {
     await admin(tx, a, p(req)); const raw = token(), agentId = id(), now = Date.now();
     const scopes = [...new Set(['read', ...req.body.scopes])];
     await tx.query('INSERT INTO agents (id,owner_id,project_id,name,token_hash,scopes,created_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [agentId, a.id, p(req), req.body.name, digest(raw), JSON.stringify(scopes), now, now + req.body.hours * 3600000]);
+    await tx.query('UPDATE agents SET token_cipher=$1 WHERE id=$2',[vault.seal(raw,agentId),agentId]);
     await event(tx, a, p(req), 'agent.created', `Подключён агент «${req.body.name}»`, { agent_id: agentId, scopes });
     // Do not persist plaintext credentials in idempotency responses. Use a non-retryable issuance route.
     return { id: agentId, token: raw, expires_at: now + req.body.hours * 3600000 };
@@ -358,6 +367,9 @@ export async function createApp(options: AppOptions) {
   registerSourceRoutes(app,route,db,{dataDir:options.dataDir,origin,git});
   registerGitRoutes(app,route,db,{git,origin,dataDir:options.dataDir});
   registerMcp(app,db,origin);
+  registerCollaboration(app,route,db,{dataDir:options.dataDir,git});
+  registerAgentOperations(route,{vault,origin});
+  registerManagedHosts(app,route,db,{origin,dataDir:options.dataDir});
   app.get('/api/v1/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   app.get('/health', { schema: { hide: true } }, async () => { await db.query('SELECT 1'); return { ok: true }; });
   app.get('/docs', { schema: { hide: true } }, async (_, reply) => reply.redirect('/#docs'));
