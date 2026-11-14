@@ -1,3 +1,4 @@
+import {version} from '../../package.json';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, BookOpen, Bot, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Clock3, Code2, Command, ExternalLink, FolderGit2, GitBranch, History, LayoutDashboard, ListTodo, LogOut, Menu, Moon, MoreHorizontal, Plus, Search, Settings, ShieldCheck, Sun, Users, Waypoints, X } from 'lucide-react';
 import { api, ApiError, setCsrf, uploadZip } from './api.ts';
@@ -136,7 +137,7 @@ export function App() {
       <div className="sidebar-projects"><div className="nav-caption">ПРОЕКТЫ<button className="icon-button" aria-label="Создать проект" onClick={() => setModal('project')}><Plus size={15}/></button></div>
         {navigationProjects.slice(0, 5).map(p => <a href={`#project/${p.id}`} key={p.id} className="sidebar-project"><span className={`project-dot ${p.work ? 'busy' : ''}`}/><span>{p.name}</span>{p.work && <span className="tiny-label">в работе</span>}</a>)}
         {!projects.length && <span className="sidebar-hint">Здесь появятся ваши проекты</span>}</div>
-      <div className="sidebar-bottom"><div className="local-status"><span className="status-dot"/>D2D <span>v0.4</span></div><a href="#settings" className="settings-link"><Settings size={18}/>Настройки</a>
+      <div className="sidebar-bottom"><div className="local-status"><span className="status-dot"/>D2D <span>v{version}</span></div><a href="#settings" className="settings-link"><Settings size={18}/>Настройки</a>
         <div className="profile"><Avatar name={user.display_name}/><div><strong>{user.display_name}</strong><span>{user.role === 'owner' ? 'Владелец платформы' : 'Участник команды'}</span></div><button className="icon-button" aria-label="Выйти" title="Выйти" onClick={() => { void api('/auth/logout', 'POST', {}).then(() => { setUser(null); setProjects([]); setDetail(null); }).catch(setError); }}><LogOut size={17}/></button></div></div>
     </aside>
     <div className="main-shell" inert={mobile}><header className="topbar"><button ref={menuButton} className="icon-button mobile-menu" onClick={() => setMobile(!mobile)} aria-expanded={mobile} aria-controls="sidebar" aria-label="Открыть навигацию"><Menu size={18}/></button><a className="header-brand" href="#projects" aria-label="D2D — проекты"><Waypoints size={28}/></a><div className="breadcrumbs"><a href="#projects">{user.login}</a><span className="muted">/</span><strong>{view === 'project' ? project?.name ?? 'Проект' : titles[view] ?? 'Проекты'}</strong></div>

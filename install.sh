@@ -30,6 +30,7 @@ fi
 docker compose version >/dev/null
 systemctl enable --now docker
 command -v curl >/dev/null || apt-get install -y curl ca-certificates
+command -v python3 >/dev/null || apt-get install -y python3
 mkdir -p "$root/releases"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
