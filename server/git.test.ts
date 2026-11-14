@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {mkdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {mkdir,mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -43,7 +43,7 @@ test('настоящий Forgejo: clone/push, ветки, PR, review, merge, р�
   const gitOptions={url:process.env.TEST_FORGEJO_URL??'http://127.0.0.1:3001',token:process.env.TEST_FORGEJO_TOKEN!,owner:process.env.TEST_FORGEJO_OWNER??'d2d-service'};
   const git=new Forgejo(gitOptions),directory=await mkdtemp(join(tmpdir(),'d2d-git-test-')),db=await database(),app=await createApp({db,registration:'open',dataDir:join(directory,'data'),forgejo:gitOptions});
   const checkout=join(directory,'checkout');await mkdir(checkout);
-  await app.listen({port:0,host:'127.0.0.1'});const origin=`http://127.0.0.1:${(app.server.address() as any).port}`;let projectId='';
+  await app.listen({port:0,host:'127.0.0.1'});const origin=`http://127.0.0.1:${(app.server.address() as any).port}`;let projectId='',uploadedProject='';
   async function call(c:any,method:any,path:string,payload?:any,headers={}){const r=await app.inject({method,url:'/api/v1'+path,payload,headers:{...c,'idempotency-key':randomUUID(),...headers}});return r;}
   async function user(login:string){const r=await call({},'POST','/auth/register',{login,display_name:login,password:'test-git-password-123'});assert.equal(r.statusCode,200,r.body);return {id:r.json().user.id,headers:{cookie:`d2d_session=${r.cookies[0].value}`,'x-csrf-token':r.json().csrf}};}
   let token='',gen=0;
@@ -77,5 +77,10 @@ test('настоящий Forgejo: clone/push, ветки, PR, review, merge, р�
     const issue=await call(owner.headers,'POST',`/artifacts/${f.id}/installations`,{});assert.equal(issue.statusCode,200,issue.body);
     const raw=issue.json().command.match(/D2D_INSTALL_TOKEN='([^']+)'/)[1],claim=await app.inject({method:'POST',url:`/api/install/${issue.json().id}/claim`,payload:{host:'test-git-server'},headers:{authorization:'Bearer '+raw}});assert.equal(claim.statusCode,200,claim.body);
     const imported=await call(owner.headers,'POST',`/projects/${p.id}/git/import`,{artifact_id:f.id,message:'Import existing snapshot'},{'x-work-generation':String(next.generation)});assert.equal(imported.statusCode,200,imported.body);
-  }finally{if(projectId)await git.json(`/repos/${git.repo(projectId)}`,'DELETE');await app.close();await db.close();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(target.includes('d2d-git-test-'));await rm(target,{recursive:true,force:true});}
+    const p2=(await call(owner.headers,'POST','/projects',{name:'Auto Git ZIP',slug:'auto-git-zip'})).json().project;uploadedProject=p2.id;
+    await run(['archive','--format=zip','-o',join(directory,'upload.zip'),'HEAD']);
+    const auto=await call(owner.headers,'POST',`/projects/${p2.id}/source`,await readFile(join(directory,'upload.zip')),{'content-type':'application/zip'});assert.equal(auto.statusCode,200,auto.body);assert.match(auto.json().git.commit_sha,/^[a-f0-9]{40}$/);assert.equal(auto.json().git.branch,'main');
+    assert.equal((await call(owner.headers,'GET',`/projects/${p2.id}/git/raw?ref=main&path=README.md`)).body,'# Updated code\n');
+
+  }finally{if(uploadedProject)await git.json(`/repos/${git.repo(uploadedProject)}`,'DELETE');if(projectId)await git.json(`/repos/${git.repo(projectId)}`,'DELETE');await app.close();await db.close();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(target.includes('d2d-git-test-'));await rm(target,{recursive:true,force:true});}
 });

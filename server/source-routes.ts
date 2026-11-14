@@ -11,9 +11,11 @@ import { currentWork,event,member,ownedWork,sourceWriter,type Actor } from './mo
 import { digest,id,Problem,token } from './security.ts';
 import { choice,integer,object,text } from './contracts.ts';
 import { inspectArchive,archiveFileStream } from './archives.ts';
+import type {Forgejo} from './forgejo.ts';
+import {importSource} from './git-source.ts';
 
 export type Register=(method:HTTPMethods,path:string,summary:string,body:any,handler:(tx:SQL,a:Actor,req:any,reply:FastifyReply)=>Promise<any>,settings?:{idempotent?:boolean;bodyLimit?:number})=>void;
-export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Database,options:{dataDir?:string;origin?:string}) {
+export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Database,options:{dataDir?:string;origin?:string;git?:Forgejo}) {
   const blobs=resolve(options.dataDir??'.d2d','blobs');
   const blob=(sha:string)=>resolve(blobs,sha+'.zip');
   type Upload={temp:string;sha:string;bytes:number;scan:Awaited<ReturnType<typeof inspectArchive>>};
@@ -40,7 +42,20 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
     await sourceWriter(tx,a,req.params.id,Number(req.headers['x-work-generation']));
     const w=await currentWork(tx,req.params.id);if(w) await ownedWork(tx,a,req.params.id,Number(req.headers['x-work-generation']));
     const upload=req.body as Upload;if(!upload?.temp||uploads.get(req)!==upload.temp)throw new Problem(415,'ZIP_REQUIRED','Выберите ZIP-архив проекта');
-    return storeSource(tx,a,req.params.id,blobs,upload,String(req.headers['x-filename']??'project.zip'));
+    const stored=await storeSource(tx,a,req.params.id,blobs,upload,String(req.headers['x-filename']??'project.zip'));
+    if(!options.git)return stored;
+    let sync:any;
+    // Archive storage remains usable during a Git outage; never discard an accepted ZIP.
+    try{
+      const repo=await options.git.ensure(req.params.id);
+      if(repo.empty||w){
+        const branch=repo.empty?'main':w.branch;
+        const commit=await importSource(options.git,req.params.id,stored.artifact,blob(stored.artifact.sha256),resolve(options.dataDir??'.d2d','git-work'),branch,a,`Загрузка ${stored.artifact.filename}`);
+        await tx.query('UPDATE artifacts SET commit_sha=$1 WHERE id=$2',[commit,stored.artifact.id]);stored.artifact.commit_sha=commit;
+        await event(tx,a,req.params.id,'git.import','Загруженный архив записан в Git',{artifact_id:stored.artifact.id,commit_sha:commit,branch});sync={commit_sha:commit,branch};
+      }else sync={pending:true,message:'Архив сохранён. Для записи следующей версии в Git возьмите проект в разработку и нажмите «Записать ZIP в Git».'};
+    }catch(e){sync={error:true,message:e instanceof Problem?e.message:'Архив сохранён, но Git не подтвердил импорт. Проверьте Git перед повтором.'};}
+    return {...stored,git:sync};
   },{idempotent:false});
   async function artifact(tx:SQL,a:Actor,artifactId:string,write=false){const f=(await tx.query('SELECT * FROM artifacts WHERE id=$1',[artifactId])).rows[0];if(!f)throw new Problem(404,'NOT_FOUND','Версия исходников не найдена');await member(tx,a,f.project_id,write);return f;}
   route('GET','/artifacts/:id/download','Скачать неизменяемый ZIP версии',null,async(tx,a,req,reply)=>{

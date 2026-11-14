@@ -355,7 +355,7 @@ export async function createApp(options: AppOptions) {
     await member(tx, a, p(req));const total=(await tx.query('SELECT count(*)::int AS n FROM events WHERE project_id=$1',[p(req)])).rows[0].n;
     return {data:(await tx.query('SELECT * FROM events WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET $2',[p(req),(page(req)-1)*50])).rows,pagination:{page:page(req),page_size:50,total}};
   });
-  registerSourceRoutes(app,route,db,{dataDir:options.dataDir,origin});
+  registerSourceRoutes(app,route,db,{dataDir:options.dataDir,origin,git});
   registerGitRoutes(app,route,db,{git,origin,dataDir:options.dataDir});
   registerMcp(app,db,origin);
   app.get('/api/v1/openapi.json', { schema: { hide: true } }, async () => app.swagger());

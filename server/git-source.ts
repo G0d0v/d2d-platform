@@ -25,7 +25,9 @@ export async function importSource(git:Forgejo,project:string,artifact:any,archi
     await run(['add','--force','--all']);
     const changed=await run(['status','--porcelain']);
     if(changed)await run(['-c',`user.name=${actor.name.replace(/[\r\n<>]/g,' ')}`,'-c',`user.email=d2d-${actor.userId}@local.invalid`,'commit','-m',message]);
-    await run(['push','origin',`HEAD:refs/heads/${branch}`]);return await run(['rev-parse','HEAD']);
+    await run(['push','origin',`HEAD:refs/heads/${branch}`]);
+    for(let attempt=0;attempt<30;attempt++){if(!(await git.exists(project))?.empty)break;await new Promise(r=>setTimeout(r,100));}
+    return await run(['rev-parse','HEAD']);
   }finally{
     const target=resolve(directory),root=resolve(workRoot);if(!target.startsWith(root+'/')&&!target.startsWith(root+'\\'))throw new Error('Temporary checkout escaped work root');
     await rm(target,{recursive:true,force:true});
