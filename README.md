@@ -8,6 +8,7 @@
 
 [Установить](#установка-одной-командой) · [Возможности](#что-внутри) · [Инструкция агента](docs/AGENTS-API.md) · [Развёртывание](docs/SELF-HOSTING.md)
 
+[![Проверка D2D](https://github.com/G0d0v/d2d-platform/actions/workflows/verify.yml/badge.svg)](https://github.com/G0d0v/d2d-platform/actions/workflows/verify.yml)
 ![Version](https://img.shields.io/badge/версия-0.5.0-238636?style=flat-square)
 ![Language](https://img.shields.io/badge/интерфейс-русский-58a6ff?style=flat-square)
 ![Hosting](https://img.shields.io/badge/размещение-свой_сервер-8b949e?style=flat-square)
@@ -117,6 +118,7 @@ npm run verify    # Полный локальный набор
 | API и примеры для агента | [AGENTS-API.md](docs/AGENTS-API.md) |
 | Настройка Git и Forgejo | [GIT-INTEGRATION.md](docs/GIT-INTEGRATION.md) |
 | Обсуждения, уведомления и операции | [COLLABORATION.md](docs/COLLABORATION.md) |
+| Результаты проверок релиза | [VALIDATION-0.5.md](docs/VALIDATION-0.5.md) |
 | HTTP API работающего экземпляра | `/api/docs`, `/api/v1/openapi.json` |
 
 ## Хранение и границы
