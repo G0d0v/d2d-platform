@@ -4,6 +4,28 @@ import { randomUUID } from 'node:crypto';
 import { database } from './db.ts';
 import { createApp } from './app.ts';
 
+test('первый публичный аккаунт защищён кодом настройки',async()=>{
+  const db=await database(),app=await createApp({db,setupToken:'private-setup-code'});
+  try{const payload={login:'owner',display_name:'Owner',password:'safe-test-password-123'};
+    const blocked=await app.inject({method:'POST',url:'/api/v1/auth/register',payload});assert.equal(blocked.statusCode,403);
+    const allowed=await app.inject({method:'POST',url:'/api/v1/auth/register',payload:{...payload,setup_token:'private-setup-code'}});assert.equal(allowed.statusCode,200,allowed.body);
+  }finally{await app.close();await db.close();}
+});
+
+test('запрос передачи можно отклонить, отменить и принять с новым поколением',async()=>{
+  const db=await database(),app=await createApp({db,registration:'open'});
+  async function call(c:any,method:any,path:string,body?:any){return app.inject({method,url:'/api/v1'+path,...(body===undefined?{}:{payload:body}),headers:{...c,'idempotency-key':randomUUID()}});}
+  async function account(login:string){const r=await call({},'POST','/auth/register',{login,display_name:login,password:'safe-test-password-123'});return {cookie:`d2d_session=${r.cookies[0].value}`,'x-csrf-token':r.json().csrf};}
+  try{const owner=await account('owner'),other=await account('other');const p=(await call(owner,'POST','/projects',{name:'Передача',slug:'transfer'})).json().project;
+    await call(owner,'POST',`/projects/${p.id}/members`,{login:'other',role:'developer'});const w=(await call(owner,'POST',`/projects/${p.id}/work-sessions`,{note:'Работа'})).json().work;
+    for(const action of ['reject','cancel','accept']){const h=(await call(other,'POST',`/work-sessions/${w.id}/transfer-requests`,{note:'Продолжу'})).json();
+      const result=await call(action==='cancel'?other:owner,'POST',`/transfer-requests/${h.id}/resolve`,{action,generation:w.generation,summary:'Контекст сохранён'});assert.equal(result.statusCode,200,result.body);
+    }
+    const current=(await call(owner,'GET',`/projects/${p.id}`)).json();assert.ok(current.project.work.generation>w.generation);assert.equal(current.handoffs.length,0);
+    assert.equal((await call(owner,'POST',`/work-sessions/${w.id}/finish`,{generation:w.generation,summary:'Устарело'})).statusCode,409);
+  }finally{await app.close();await db.close();}
+});
+
 test('исправления аудита: полный поиск, контекст, 501 задача, роли, архив и истечение агента',async()=>{
   const db=await database();const app=await createApp({db,registration:'open'});
   async function call(c:any,method:any,path:string,body?:any,headers={}) {return app.inject({method,url:'/api/v1'+path,...(body===undefined?{}:{payload:body}),headers:{...c,'idempotency-key':randomUUID(),...headers}});}

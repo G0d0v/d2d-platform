@@ -4,10 +4,10 @@ import { api, setCsrf } from './api.ts';
 import { ErrorBox, Field } from './components.tsx';
 
 export function Auth({ onLogin }: { onLogin: (result: any) => void }) {
-  const [mode, setMode] = useState('login'), [setup, setSetup] = useState(false), [registration, setRegistration] = useState('invite');
+  const [mode, setMode] = useState('login'), [setup, setSetup] = useState(false), [registration, setRegistration] = useState('invite'),[setupRequired,setSetupRequired]=useState(false);
   const [error, setError] = useState<Error | null>(null), [busy, setBusy] = useState(false);
   async function loadStatus() {
-    try { const status = await api('/status'); setSetup(status.setup); setRegistration(status.registration); if (status.setup) setMode('register'); setError(null); }
+    try { const status = await api('/status'); setSetup(status.setup);setSetupRequired(!!status.setup_token_required); setRegistration(status.registration); if (status.setup) setMode('register'); setError(null); }
     catch (err) { setError(err as Error); }
   }
   useEffect(() => { void loadStatus(); }, []);
@@ -21,10 +21,10 @@ export function Auth({ onLogin }: { onLogin: (result: any) => void }) {
   return <div className="auth-layout"><section className="auth-story"><a className="brand" href="#"><span className="brand-symbol"><Waypoints size={24}/></span><span>D2D<span className="brand-light"> Platform</span></span></a>
     <div className="story-content"><span className="eyebrow">DEVELOPER TO DEVELOPER</span><h1>Хорошая работа<br/>начинается<br/><em>с общего контекста.</em></h1><p>Проекты, задачи и передача работы.<br/>Всё, что нужно вашей команде, в одном месте.</p>
       <div className="story-flow"><span><GitBranch size={20}/> Взять в работу</span><i/><span><Users size={20}/> Передать контекст</span></div></div>
-    <div className="auth-footer"><ShieldCheck size={16}/> Приватное рабочее пространство <span>Локальная альфа · 0.1</span></div></section>
+    <div className="auth-footer"><ShieldCheck size={16}/> Приватное рабочее пространство <span>D2D · 0.2</span></div></section>
     <section className="auth-form"><div className="auth-form-inner"><span className="eyebrow">ВАША КОМАНДА. ВАШИ ПРОЕКТЫ.</span><h2>{mode === 'register' ? setup ? 'Создайте своё пространство' : 'Присоединиться к команде' : mode === 'recover' ? 'Восстановить доступ' : 'С возвращением'}</h2>
       <p className="muted">{mode === 'register' ? setup ? 'Первый аккаунт станет владельцем платформы.' : 'Введите данные и код приглашения от владельца.' : mode === 'recover' ? 'Используйте резервный код, сохранённый при регистрации.' : 'Войдите, чтобы продолжить работу над проектами.'}</p>
-      <form onSubmit={submit}><fieldset disabled={busy}><Field label="Логин"><input name="login" autoComplete="username" required minLength={3} maxLength={32} pattern="[a-zA-Z0-9][a-zA-Z0-9_-]+" placeholder="Ваш логин"/></Field>
+      <form onSubmit={submit}><fieldset disabled={busy}>{mode==='register'&&setup&&setupRequired&&<Field label="Код первоначальной настройки"><input name="setup_token" required type="password" autoComplete="off"/></Field>}<Field label="Логин"><input name="login" autoComplete="username" required minLength={3} maxLength={32} pattern="[a-zA-Z0-9][a-zA-Z0-9_-]+" placeholder="Ваш логин"/></Field>
         {mode === 'register' && <Field label="Ваше имя"><input name="display_name" required maxLength={80} autoComplete="name" placeholder="Как к вам обращаться"/></Field>}
         {mode === 'recover' && <Field label="Резервный код"><input name="recovery_code" required autoComplete="off"/></Field>}
         <Field label={mode === 'recover' ? 'Новый пароль' : 'Пароль'} hint={mode !== 'login' ? 'Не менее 12 символов' : undefined}><input name="password" type="password" required minLength={mode === 'login' ? 1 : 12} maxLength={200} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="Введите пароль"/></Field>

@@ -1,0 +1,30 @@
+import {useEffect,useRef,useState} from 'react';
+import {Plus,Search} from 'lucide-react';
+import {api} from './api.ts';
+import {ActionForm,Empty,ErrorBox,Field,Modal} from './components.tsx';
+import type {Task,Work} from '../../server/contracts.ts';
+import {captureWork,requireWorkIntent,type WorkIntent} from './work-intent.ts';
+const statuses={todo:'Запланировано',in_progress:'В работе',review:'На проверке',done:'Готово'};
+export function ProjectTasks({projectId,work,userId,canWrite,changed}:{projectId:string;work:Work|null;userId:string;canWrite:boolean;changed:()=>void}) {
+  const [items,setItems]=useState<Task[]>([]),[page,setPage]=useState(1),[total,setTotal]=useState(0),[q,setQ]=useState(''),[status,setStatus]=useState('all'),[archived,setArchived]=useState(false);
+  const [mode,setMode]=useState('list'),[error,setError]=useState<Error|null>(null),[loading,setLoading]=useState(false);
+  const [edit,setEdit]=useState<{task:Task|null;intent:WorkIntent|null}|null>(null);
+  const mine=!!work&&work.executor_id===userId;
+  const sequence=useRef(0);
+  async function load(){const n=++sequence.current;setLoading(true);try{const r=await api(`/projects/${projectId}/tasks?page=${page}&q=${encodeURIComponent(q)}&state=${status}&archived=${archived}`);if(n!==sequence.current)return;setItems(r.data);setTotal(r.pagination.total);setError(null);}catch(e){if(n===sequence.current)setError(e as Error);}finally{if(n===sequence.current)setLoading(false);}}
+  useEffect(()=>{void load();},[projectId,page,q,status,archived]);
+  useEffect(()=>{setPage(1);},[q,status,archived,projectId]);
+  function open(task:Task|null){setEdit({task,intent:captureWork(work)});}
+  const cards=(tasks:Task[])=>tasks.map(t=><button key={t.id} className="task-card task-open" onClick={()=>open(t)}><span className={`priority ${t.priority}`}>{t.priority==='high'?'Высокий приоритет':t.priority==='low'?'Низкий приоритет':'Обычный приоритет'}</span><h4>{t.title}</h4><p className="task-excerpt">{t.description||'Описание не добавлено'}</p><span className={`task-status ${t.status}`}>{statuses[t.status]}</span></button>);
+  return <><div className="section-heading"><div><h2>Задачи проекта · {total}</h2><p className="muted">{mine?'Откройте задачу, чтобы изменить её или сохранить результат.':'Просмотр доступен всей команде. Для изменений возьмите проект в разработку.'}</p></div>{canWrite&&<button className="button primary" onClick={()=>open(null)}><Plus size={17}/>Новая задача</button>}</div>
+    <div className="tasks-toolbar"><label className="search-field"><Search size={17}/><input aria-label="Поиск задач" placeholder="Найти задачу во всём проекте" value={q} onChange={e=>setQ(e.target.value)}/></label><select aria-label="Фильтр статуса" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">Все статусы</option>{Object.entries(statuses).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><button className="button" aria-pressed={archived} onClick={()=>setArchived(!archived)}>{archived?'Показать активные':'Архив задач'}</button><div className="desktop-view-toggle"><button className="button" aria-pressed={mode==='list'} onClick={()=>setMode('list')}>Список</button><button className="button" aria-pressed={mode==='board'} onClick={()=>setMode('board')}>Доска</button></div></div>
+    <ErrorBox error={error} retry={load}/>{loading&&<p role="status" className="muted">Обновляем задачи…</p>}
+    {!items.length&&!loading?<Empty icon={<Search size={26}/>} title="Задач не найдено" text="Измените фильтр или добавьте новую задачу."/>:<><div className={mode==='board'?'task-board responsive-task-board':'task-list-view'}>{mode==='board'?Object.entries(statuses).map(([key,label])=><section key={key} className="board-column"><h3>{label}</h3>{cards(items.filter(t=>t.status===key))}</section>):cards(items)}</div>{total>50&&<div className="pagination"><button className="button" disabled={page===1} onClick={()=>setPage(page-1)}>Назад</button><span>{page} / {Math.ceil(total/50)}</span><button className="button" disabled={page*50>=total} onClick={()=>setPage(page+1)}>Далее</button></div>}</>}
+    {edit&&<Modal title={edit.task?'Задача проекта':'Новая задача'} close={()=>setEdit(null)}><ActionForm submitDisabled={!canWrite||!!edit.task&&!mine} label={edit.task?'Сохранить изменения':'Создать задачу'} close={()=>setEdit(null)} submit={async data=>{
+      const body={title:String(data.get('title')).trim(),description:String(data.get('description')).trim(),priority:String(data.get('priority'))};
+      if(edit.task){const intent=requireWorkIntent(edit.intent,work);await api(`/tasks/${edit.task.id}`,'PATCH',{...body,status:data.get('status'),archived:data.get('archived')==='on',generation:intent.generation},{'If-Match':String(edit.task.version)});}
+      else await api(`/projects/${projectId}/tasks`,'POST',body);
+      setEdit(null);await load();changed();
+    }}><Field label="Название"><input name="title" required maxLength={200} defaultValue={edit.task?.title??''} readOnly={!canWrite}/></Field><Field label="Описание, критерии готовности и результат"><textarea name="description" rows={9} maxLength={10000} defaultValue={edit.task?.description??''} readOnly={!canWrite}/></Field><Field label="Приоритет"><select name="priority" defaultValue={edit.task?.priority??'normal'} disabled={!canWrite}><option value="normal">Обычный</option><option value="high">Высокий</option><option value="low">Низкий</option></select></Field>{edit.task&&<><Field label="Статус"><select name="status" defaultValue={edit.task.status} disabled={!mine}>{Object.entries(statuses).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></Field><label className="checkbox-field"><input type="checkbox" name="archived" defaultChecked={!!(edit.task as any).archived_at} disabled={!mine}/>В архиве (можно восстановить)</label>{!mine&&<p className="form-intro">Чтобы сохранить изменения, закройте карточку, возьмите проект в разработку и откройте задачу снова.</p>}</>}</ActionForm></Modal>}
+  </>;
+}

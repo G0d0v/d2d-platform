@@ -2,8 +2,12 @@
 import { database } from '../server/db.ts';
 import { createApp } from '../server/app.ts';
 import { randomUUID } from 'node:crypto';
+import { mkdtemp,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join,resolve,dirname,basename } from 'node:path';
+const directory=await mkdtemp(join(tmpdir(),'d2d-ui-fixture-'));
 const db = await database();
-const app = await createApp({ db, origin: 'http://127.0.0.1:19092', registration: 'open' });
+const app = await createApp({ db, dataDir:directory,origin: 'http://localhost:19092', registration: 'open' });
 async function account(login, display_name) {
   const r = await app.inject({ method: 'POST', url: '/api/v1/auth/register', payload: { login, display_name, password: 'local-ui-test-only-123' } });
   return { cookie: `d2d_session=${r.cookies[0].value}`, csrf: r.json().csrf, user: r.json().user };
@@ -27,7 +31,7 @@ for (const [name, slug, description, busy] of [
   if (busy) await write(colleague, `/projects/${project.id}/work-sessions`, { note: 'Проверяю обработку конфликтов и повторных запросов' });
 }
 await app.listen({ host: '127.0.0.1', port: 19092 });
-console.log('Disposable UI fixture: http://127.0.0.1:19092 · qa_owner · local-ui-test-only-123');
-async function stop() { await app.close(); await db.close(); }
+console.log('Disposable UI fixture: http://localhost:19092 · qa_owner · local-ui-test-only-123');
+async function stop() { await app.close(); await db.close();const target=resolve(directory);if(dirname(target)===resolve(tmpdir())&&basename(target).startsWith('d2d-ui-fixture-'))await rm(target,{recursive:true,force:true}); }
 process.once('SIGINT', () => void stop());
 process.once('SIGTERM', () => void stop());

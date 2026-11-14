@@ -143,3 +143,71 @@ dialog::backdrop { background: #070a10b8; backdrop-filter: blur(4px); } .dialog-
 @media (max-width: 540px) { .page-heading { flex-direction: column; align-items: flex-start; gap: 20px; } .page-heading h1 { font-size: 28px; } .page-heading p { font-size: 12px; } .workspace-summary { padding: 19px 0; margin-bottom: 24px; } .workspace-summary > div { padding: 0 12px; gap: 6px; } .workspace-summary > div > svg { display: none; } .workspace-summary > div > span { font-size: 9px; } .workspace-summary strong { font-size: 23px; margin-top: 4px; } .list-columns { display: none; } .project-row { flex-wrap: wrap; gap: 12px; padding: 18px 16px; } .project-row > .project-name { flex-basis: calc(100% - 60px); } .project-row > .badge { width: auto; margin-left: 54px; font-size: 9px; padding: 0; } .row-meta { margin-left: auto; width: auto; } .row-arrow { width: 14px; } .bottom-note { flex-wrap: wrap; } .bottom-note > span { max-width: calc(100% - 30px); } .bottom-note > a { margin-left: 25px; } .filter-tabs button { font-size: 11px; padding: 7px 9px; } .list-toolbar > span { font-size: 10px; } .empty { padding: 45px 20px; } .empty h3 { font-size: 16px; } .project-title .project-mark { width: 44px; height: 44px; } .project-title h1 { font-size: 24px; } .project-heading { gap: 15px; } .heading-actions { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; } .free-banner { flex-wrap: wrap; font-size: 11px; } .free-banner > span:last-child { margin-left: 15px; } .work-banner { padding: 18px; gap: 12px; } .work-banner-icon { display: none; } .work-banner-content { min-width: 100%; } .work-meta { gap: 8px; } .work-banner-actions { margin: 8px 0 0; justify-content: flex-start; } .project-tabs { gap: 20px; margin: 23px 0; } .project-tabs a { font-size: 11px; } .project-context { padding: 20px; } .project-context dl { grid-template-columns: 1fr; } .task-preview .task-status { display: none; } .integration-row { flex-wrap: wrap; padding: 22px; gap: 12px; } .integration-row > div { flex-basis: calc(100% - 60px); } .integration-row .badge { margin-left: 57px; } .integration-note { padding: 20px 22px; } .agent-row { flex-wrap: wrap; padding: 18px; gap: 12px; } .agent-row > div { flex-basis: calc(100% - 60px); } .agent-row > .badge { margin-left: 51px; } .member-row { gap: 10px; padding: 17px; } .member-row .badge { font-size: 9px; } .member-row strong { font-size: 12px; } .info-panel { padding: 23px; gap: 15px; } .info-panel > svg { width: 23px; } .info-panel p { font-size: 12px; } .settings-panel { padding: 20px; } .theme-options { gap: 8px; } .theme-option { padding: 5px; } .theme-option > span:last-child { font-size: 9px; } .theme-preview { height: 70px; } .theme-preview i { height: 6px; } .app-footer { font-size: 8px; gap: 10px; } dialog { padding: 22px; } .dialog-heading h2 { font-size: 18px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (max-width: 800px) { .mobile-close { display: flex; align-self: flex-end; margin-top: -16px; margin-right: -8px; margin-bottom: 7px; } }
+/* Working screens: readable text, compact task previews and a single mobile flow. */
+.attention-panel { padding: 22px 24px; margin: 0 0 30px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.attention-panel h2 { margin-bottom: 12px; }
+.attention-panel a { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 14px; color: var(--fg); }
+.tasks-toolbar, .settings-actions, .source-version, .request-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
+.search-field { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 220px; color: var(--muted); }
+.search-field input { width: 100%; }
+.tasks-toolbar select { width: auto; min-width: 160px; }
+.desktop-view-toggle { display: flex; gap: 6px; }
+.task-list-view { display: grid; gap: 12px; }
+.task-open { display: block; width: 100%; text-align: left; color: var(--fg); cursor: pointer; margin: 0; }
+.task-open:hover { border-color: var(--border-strong); background: var(--raised); }
+.task-open h4 { font-size: 15px; }
+.task-open .task-excerpt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; margin-bottom: 14px; }
+.task-open .priority { font-size: 12px; }
+.task-open .task-status { font-size: 12px; }
+.board-column .task-open { margin-bottom: 12px; }
+.checkbox-field { display: flex; align-items: center; gap: 10px; font-size: 14px; margin: 20px 0; }
+.checkbox-field input { width: 18px; height: 18px; }
+.session-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 22px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.session-row strong { font-size: 14px; }
+.session-row p { font-size: 12px; line-height: 1.7; margin-top: 5px; }
+.source-version { justify-content: space-between; }
+.source-version .field { flex: 1; max-width: 600px; margin: 0; }
+.source-layout { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 22px; align-items: start; }
+.source-files-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); }
+.source-files-header input { flex: 1; min-width: 160px; }
+.source-file-list { max-height: 580px; overflow: auto; }
+.source-file { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 16px; text-align: left; color: var(--fg); border: 0; border-bottom: 1px solid var(--border); background: transparent; }
+.source-file:hover { background: var(--raised); }
+.source-file > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 12px var(--mono); }
+.source-file > small { color: var(--muted); flex-shrink: 0; font-size: 12px; }
+.source-file > svg { color: var(--muted); flex-shrink: 0; }
+.source-preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 65vh; overflow: auto; padding: 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font: 12px/1.7 var(--mono); }
+.install-panel > svg { color: var(--accent); margin-bottom: 12px; }
+.install-panel h3 { font-size: 18px; margin-bottom: 16px; }
+.install-panel .button { display: flex; width: 100%; margin-top: 14px; white-space: normal; }
+.install-panel p { line-height: 1.8; font-size: 13px; }
+.checksum { display: block; overflow-wrap: anywhere; margin: 18px 0; color: var(--muted); font-size: 11px; }
+.install-steps { padding-left: 22px; font-size: 14px; line-height: 1.8; }
+.install-steps li { margin-bottom: 9px; }
+.panel-note { padding: 22px; font-size: 14px; }
+.last-handoff { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 20px; }
+.last-handoff blockquote { font-size: 14px; line-height: 1.8; }
+.role-label, .badge, .work-meta, .timeline-event time, .small-text { font-size: 12px; }
+.sidebar nav a, .project-tabs > a { font-size: 14px; }
+.project-tabs > a { min-height: 44px; }
+.button.small { min-height: 40px; font-size: 13px; }
+.icon-button { min-width: 40px; min-height: 40px; }
+.field input, .field textarea, .field select { font-size: 15px; }
+@media(max-width:1000px) { .source-layout { grid-template-columns: 1fr; } }
+@media(max-width:800px) {
+ .project-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 5px 14px; overflow: visible; }
+ .project-tabs > a { min-width: 0; white-space: normal; padding: 10px 0; font-size: 13px; }
+ .responsive-task-board { display: block; overflow: visible; }
+ .responsive-task-board .board-column { margin-bottom: 16px; min-height: 100px; }
+ .desktop-view-toggle { display: none; }
+ .tasks-toolbar { align-items: stretch; }
+ .tasks-toolbar .search-field { flex-basis: 100%; }
+ .tasks-toolbar select { flex: 1; min-width: 0; }
+ .source-version { align-items: stretch; }
+ .source-version .field { flex-basis: 100%; }
+ .session-row { padding: 17px; flex-wrap: wrap; }
+ .heading-actions { flex-wrap: wrap; }
+ .section-heading { flex-wrap: wrap; }
+ .install-panel p { font-size: 14px; }
+ .attention-panel { padding: 19px; }
+}

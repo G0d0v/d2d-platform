@@ -154,7 +154,7 @@ describe('Локальный рабочий процесс', () => {
   it('публикует OpenAPI и честные capabilities', async () => {
     const api = await call({}, 'GET', '/openapi.json'); assert.equal(api.statusCode, 200);
     assert.equal(api.json().openapi, '3.0.3'); assert.ok(api.json().paths['/api/v1/work-sessions/{id}/handoff']);
-    const caps = (await call(alice, 'GET', '/capabilities')).json(); assert.equal(caps.git_write, false); assert.equal(caps.deployments, false);
+    const caps = (await call(alice, 'GET', '/capabilities')).json(); assert.equal(caps.git_write, false); assert.equal(caps.deployments, true);assert.equal(caps.source_upload,true);
     const events = (await call(alice, 'GET', `/projects/${project.id}/audit-events`)).json().data;
     assert.ok(events.some((x: any) => x.kind === 'work.transferred'));
   });

@@ -88,7 +88,7 @@ export async function migrate(db: Database) {
 }
 
 async function upgrade(tx: SQL) {
-  if ((await tx.query('SELECT version FROM migrations WHERE version=2')).rows.length) return;
+  if ((await tx.query('SELECT version FROM migrations WHERE version=2')).rows.length) {await installSnapshots(tx);return;}
   for (const sql of [
     'ALTER TABLE projects ADD COLUMN archived_at bigint',
     'ALTER TABLE tasks ADD COLUMN archived_at bigint',
@@ -101,4 +101,12 @@ async function upgrade(tx: SQL) {
       token_hash text NOT NULL UNIQUE, expires_at bigint NOT NULL, state text NOT NULL DEFAULT 'pending', host text, message text NOT NULL DEFAULT '', created_by text NOT NULL REFERENCES users(id), created_at bigint NOT NULL, updated_at bigint NOT NULL)`,
   ]) await tx.query(sql);
   await tx.query('INSERT INTO migrations VALUES (2,$1)', [Date.now()]);
+  await installSnapshots(tx);
+}
+
+async function installSnapshots(tx:SQL){
+  if((await tx.query('SELECT version FROM migrations WHERE version=3')).rows.length)return;
+  await tx.query("ALTER TABLE installations ADD COLUMN recipe jsonb NOT NULL DEFAULT '{}'");
+  await tx.query('UPDATE installations i SET recipe=a.recipe FROM artifacts a WHERE a.id=i.artifact_id');
+  await tx.query('INSERT INTO migrations VALUES (3,$1)',[Date.now()]);
 }

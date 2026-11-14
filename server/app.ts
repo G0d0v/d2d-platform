@@ -10,9 +10,10 @@ import { resolve } from 'node:path';
 import type { Database, SQL } from './db.ts';
 import { migrate } from './db.ts';
 import { authenticate, createUser, human, newSession, publicUser, verifyLogin } from './auth.ts';
-import { admin, currentWork, event, lastHandoff, listProjects, lockProject, member, ownedWork, type Actor } from './model.ts';
+import { admin, currentWork, event, lastHandoff, listProjects, projectPage, lockProject, member, ownedWork, type Actor } from './model.ts';
 import { canonical, digest, equal, id, passwordHash, passwordVerify, Problem, token } from './security.ts';
 import { choice, errorSchema, generation, integer, object, responseSchemaFor, text } from './contracts.ts';
+import { registerSourceRoutes } from './source-routes.ts';
 
 export interface AppOptions { db: Database; origin?: string; devOrigin?: string; registration?: 'open' | 'invite'; logger?: boolean; staticRoot?: string; setupToken?:string; dataDir?:string; }
 type RequestData = { Body: Record<string, any>; Params: { id: string }; Querystring: { page?: string; q?: string; state?: string; archived?: string } };
@@ -29,7 +30,7 @@ export async function createApp(options: AppOptions) {
   await app.register(cookie);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(swagger, { openapi: { openapi: '3.0.3', info: {
-    title: 'D2D API', version: '0.1.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git/PR/деплой отключены.' },
+    title: 'D2D API', version: '0.2.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git/PR отключены. Архивы и установка версии на сервер доступны администратору.' },
     components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' }, session: { type: 'apiKey', in: 'cookie', name: 'd2d_session' } } } } });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
   app.addHook('onRequest', async (req, reply) => {
@@ -42,15 +43,17 @@ export async function createApp(options: AppOptions) {
     const e = err as any;
     const status = e instanceof Problem ? e.status : e.validation ? 422 : e.code === '23505' ? 409 : [400, 413, 415, 429].includes(e.statusCode) ? e.statusCode : 500;
     const code = e instanceof Problem ? e.code : e.validation ? 'VALIDATION_ERROR' : status === 429 ? 'RATE_LIMITED' : status === 409 ? 'ALREADY_EXISTS' : status === 413 ? 'BODY_TOO_LARGE' : status === 415 ? 'UNSUPPORTED_MEDIA_TYPE' : status === 400 ? 'BAD_REQUEST' : 'INTERNAL_ERROR';
-    const message = e instanceof Problem ? e.message : e.validation ? 'Проверьте поля запроса' : status === 429 ? 'Слишком много запросов. Повторите позже' : status === 409 ? 'Такая запись уже существует' : status === 413 ? 'Запрос превышает 64 КиБ' : status === 415 ? 'Используйте Content-Type: application/json' : status === 400 ? 'Некорректный запрос' : 'Внутренняя ошибка. Сохраните ID обращения';
+    const field=e.validation?.[0]?.instancePath?.split('/').filter(Boolean).at(-1)||e.validation?.[0]?.params?.missingProperty;
+    const labels:Record<string,string>={title:'название задачи',name:'название',description:'описание',note:'цель работы',summary:'итог работы',password:'пароль',new_password:'новый пароль',login:'логин',generation:'актуальная рабочая сессия'};
+    const message = e instanceof Problem ? e.message : e.validation ? `Проверьте поле «${labels[field]??field??'данные запроса'}»` : status === 429 ? 'Слишком много запросов. Повторите позже' : status === 409 ? 'Такая запись уже существует' : status === 413 ? 'Запрос превышает допустимый размер' : status === 415 ? 'Используйте Content-Type: application/json или application/zip для загрузки проекта' : status === 400 ? 'Некорректный запрос' : 'Внутренняя ошибка. Сохраните ID обращения';
     if (status === 500) req.log.error(e);
     reply.status(status).send({ error: { code, message, details: e instanceof Problem ? e.details : undefined, retryable: status === 429, request_id: req.id } });
   });
 
-  function route(method: HTTPMethods, path: string, summary: string, body: any, handler: Handler, settings: { public?: boolean; idempotent?: boolean; authRate?: boolean } = {}) {
+  function route(method: HTTPMethods, path: string, summary: string, body: any, handler: Handler, settings: { public?: boolean; idempotent?: boolean; authRate?: boolean;bodyLimit?:number } = {}) {
     const mutation = !['GET', 'HEAD'].includes(method);
     const idem = mutation && settings.idempotent !== false;
-    app.route<RequestData>({ method, url: `/api/v1${path}`, config: settings.authRate ? { rateLimit: { max: 10, timeWindow: '1 minute' } } : {},
+    app.route<RequestData>({ method, url: `/api/v1${path}`, ...(settings.bodyLimit?{bodyLimit:settings.bodyLimit}:{}),config: settings.authRate ? { rateLimit: { max: 10, timeWindow: '1 minute' } } : {},
       schema: { summary, tags: [path.split('/')[1]], security: settings.public ? [] : [{ bearer: [] }, { session: [] }],
         ...(body ? { body } : {}),
         ...(path.includes(':id') ? { params: object({ id: text(80) }) } : {}),
@@ -83,6 +86,8 @@ export async function createApp(options: AppOptions) {
           } else if(path==='/transfer-requests/:id/resolve') {
             const h=(await tx.query('SELECT session_id FROM handoffs WHERE id=$1',[req.params.id])).rows[0];if(!h) throw new Problem(404,'NOT_FOUND','Запрос не найден');
             const w=await sessionProject(tx,actor,h.session_id);await member(tx,actor,w.project_id,true);
+          } else if(path.startsWith('/artifacts/:id')) {
+            const f=(await tx.query('SELECT project_id FROM artifacts WHERE id=$1',[req.params.id])).rows[0];if(!f)throw new Problem(404,'NOT_FOUND','Версия не найдена');await admin(tx,actor,f.project_id);await member(tx,actor,f.project_id,true);
           } else if (path === '/projects') {
             human(actor); await member(tx, actor, old.response.project.id, true);
           }
@@ -125,7 +130,7 @@ export async function createApp(options: AppOptions) {
     user: publicUser((await tx.query('SELECT * FROM users WHERE id=$1', [a.userId])).rows[0]), csrf: a.csrf, agent_id: a.agentId, scopes: a.scopes,
   }));
   route('GET', '/capabilities', 'Реально реализованные возможности', null, async () => ({ api_version: 'v1', work_sessions: true, tasks: true, agents: true,
-    forgejo: false, git_write: false, reviews: false, builds: false, releases: false, deployments: false, mcp: false }));
+    forgejo: false, git_write: false, reviews: false, builds: false, releases: false, deployments: true, source_upload:true, mcp: false }));
   route('POST', '/invites', 'Пригласить коллегу, при необходимости сразу в проект', object({project_id:text(80),role:choice('admin','developer','viewer')},[]), async (tx, a,req) => {
     human(a); if(req.body.project_id) await admin(tx,a,req.body.project_id); else if (a.role !== 'owner') throw new Problem(403, 'FORBIDDEN', 'Приглашения создаёт владелец платформы или администратор проекта');
     const raw = token(), expires = Date.now() + 86400000;
@@ -133,7 +138,8 @@ export async function createApp(options: AppOptions) {
     return { invite: raw, expires_at: expires };
   }, { idempotent: false });
   route('GET','/me/work','Все мои активные сессии независимо от страницы',null,async(tx,a)=>({data:await listProjects(tx,a,{mine:true})}));
-  route('GET','/me/attention','Запросы передачи и сессии, требующие внимания',null,async(tx,a)=>({
+  route('GET','/me/navigation','Проекты для навигации и приглашений',null,async(tx,a)=>({data:(await tx.query(`SELECT p.id,p.name,p.slug,m.role AS member_role FROM projects p JOIN members m ON m.project_id=p.id WHERE m.user_id=$1 AND p.archived_at IS NULL ${a.agentId?'AND p.id=$2':''} ORDER BY p.created_at DESC,p.id`,a.agentId?[a.userId,a.projectId]:[a.userId])).rows}));
+  route('GET','/me/attention','Запросы передачи и сессии, требующие внимания',null,async(tx,a)=>({projects:await listProjects(tx,a,{state:'busy'}),
     requests:(await tx.query(`SELECT h.*,w.project_id,p.name AS project_name,u.display_name AS requester_name FROM handoffs h JOIN work_sessions w ON w.id=h.session_id
       JOIN projects p ON p.id=w.project_id JOIN members m ON m.project_id=p.id JOIN users u ON u.id=h.requested_by
       WHERE m.user_id=$1 AND p.archived_at IS NULL AND h.state='pending' AND w.state IN ('active','paused','review') AND w.expires_at>$2
@@ -183,7 +189,7 @@ export async function createApp(options: AppOptions) {
     }
     await tx.query('UPDATE handoffs SET state=$1 WHERE id=$2',[req.body.action==='accept'?'accepted':req.body.action==='reject'?'rejected':'cancelled',h.id]);await event(tx,a,w.project_id,'work.request_resolved',`Решение по передаче: ${req.body.action}`,{summary:req.body.summary});return {ok:true};
   });
-  route('GET', '/projects', 'Поиск по всем проектам, по 50 на страницу', null, async (tx, a, req) => paginate(await listProjects(tx, a, {q:req.query.q,state:req.query.state,archived:req.query.archived==='true'}), page(req)));
+  route('GET', '/projects', 'Поиск по всем проектам, по 50 на страницу', null, async (tx, a, req) => projectPage(tx, a, {page:page(req),q:req.query.q,state:req.query.state,archived:req.query.archived==='true'}));
   route('POST', '/projects', 'Создать проект', object({ name: text(100), slug: { ...text(60, 2), pattern: '^[a-z0-9][a-z0-9-]+$' }, description: text(2000, 0) }, ['name', 'slug']), async (tx, a, req) => {
     human(a); const projectId = id();
     await tx.query('INSERT INTO projects (id,slug,name,description,owner_id,created_at) VALUES ($1,$2,$3,$4,$5,$6)', [projectId, req.body.slug, req.body.name, req.body.description ?? '', a.id, Date.now()]);
@@ -194,7 +200,7 @@ export async function createApp(options: AppOptions) {
   route('GET', '/projects/:id', 'Проект, задачи, участники и последние 100 событий', null, async (tx, a, req) => {
     const project = await member(tx, a, p(req));
     return { project: { ...project, work: await currentWork(tx, p(req)) },
-      tasks: (await tx.query('SELECT * FROM tasks WHERE project_id=$1 AND archived_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 50', [p(req)])).rows,
+      tasks: (await tx.query("SELECT * FROM tasks WHERE project_id=$1 AND archived_at IS NULL AND status<>'done' ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,created_at,id LIMIT 50", [p(req)])).rows,
       last_handoff: await lastHandoff(tx,p(req)),
       task_total: (await tx.query('SELECT count(*)::int AS n FROM tasks WHERE project_id=$1 AND archived_at IS NULL',[p(req)])).rows[0].n,
       members: (await tx.query('SELECT u.id,u.login,u.display_name,m.role FROM members m JOIN users u ON u.id=m.user_id WHERE m.project_id=$1 ORDER BY u.display_name', [p(req)])).rows,
@@ -337,8 +343,10 @@ export async function createApp(options: AppOptions) {
       tasks_url: `/api/v1/projects/${project.id}/tasks`, context_version: project.generation, observed_at: Date.now() };
   });
   route('GET', '/projects/:id/audit-events', 'История проекта, по 50 событий на страницу', null, async (tx, a, req) => {
-    await member(tx, a, p(req)); return paginate((await tx.query('SELECT * FROM events WHERE project_id=$1 ORDER BY created_at DESC,id DESC', [p(req)])).rows, page(req));
+    await member(tx, a, p(req));const total=(await tx.query('SELECT count(*)::int AS n FROM events WHERE project_id=$1',[p(req)])).rows[0].n;
+    return {data:(await tx.query('SELECT * FROM events WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET $2',[p(req),(page(req)-1)*50])).rows,pagination:{page:page(req),page_size:50,total}};
   });
+  registerSourceRoutes(app,route,db,{dataDir:options.dataDir,origin});
   app.get('/api/v1/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   app.get('/health', { schema: { hide: true } }, async () => { await db.query('SELECT 1'); return { ok: true }; });
   app.get('/docs', { schema: { hide: true } }, async (_, reply) => reply.redirect('/#docs'));

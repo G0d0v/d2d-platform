@@ -26,7 +26,7 @@ const paginationSchema = responseObject({ page: integer(1, 1000000), page_size: 
 const paginated = (item: unknown) => responseObject({ data: arrayOf(item), pagination: paginationSchema });
 const auditSchema = responseObject({ id: text(), actor_id: text(), actor_name: text(), kind: text(), message: text(5000), created_at: timestamp, detail: { type: 'object', additionalProperties: true } });
 export function responseSchemaFor(method: string, path: string): any {
-  if (['/me/work','/me/attention','/me/security','/team'].includes(path)) return {type:'object',additionalProperties:true};
+  if (['/me/work','/me/navigation','/me/attention','/me/security','/team'].includes(path)||path.endsWith('/source')||path.startsWith('/artifacts/')) return {type:'object',additionalProperties:true};
   if (path === '/status') return responseObject({ registration: choice('open', 'invite'), setup: { type: 'boolean' } });
   if (['/auth/login', '/auth/register', '/auth/recover'].includes(path)) return responseObject({ user: userSchema, csrf: text(), recovery_code: text() }, path === '/auth/login' ? ['user', 'csrf'] : ['user', 'csrf', 'recovery_code']);
   if (path === '/me') return responseObject({ user: userSchema, scopes: arrayOf(text()), csrf: text(), agent_id: text() }, ['user', 'scopes']);
