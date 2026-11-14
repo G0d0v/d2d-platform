@@ -9,7 +9,7 @@ export function ErrorBox({ error, retry }: { error: Error | null; retry?: () => 
     {retry && <button type="button" className="button small" onClick={retry}>Обновить</button>}</div>;
 }
 const ModalClose = createContext<(() => void) | null>(null);
-export function Modal({ title, children, close }: { title: string; children: ReactNode; close: () => void }) {
+export function Modal({ title, children, close, trackChanges = true }: { title: string; children: ReactNode; close: () => void; trackChanges?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const dirty = useRef(false);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -23,7 +23,7 @@ export function Modal({ title, children, close }: { title: string; children: Rea
     const warn = (event: BeforeUnloadEvent) => { if (dirty.current) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, []);
-  return <dialog ref={ref} onInputCapture={() => { dirty.current = true;if(ref.current)ref.current.dataset.dirty='true'; }} onCancel={e => { e.preventDefault(); requestClose(); }} onClick={e => { if (e.target === ref.current) requestClose(); }} aria-labelledby="dialog-title">
+  return <dialog ref={ref} onInputCapture={() => { if(trackChanges){dirty.current = true;if(ref.current)ref.current.dataset.dirty='true';} }} onCancel={e => { e.preventDefault(); requestClose(); }} onClick={e => { if (e.target === ref.current) requestClose(); }} aria-labelledby="dialog-title">
     <div className="dialog-heading"><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="Закрыть окно" onClick={requestClose}><X size={20}/></button></div>
     {confirmClose && <div className="discard-draft" role="alert"><p>В форме есть несохранённые изменения. Закрыть её и потерять черновик?</p><div className="dialog-actions"><button className="button" onClick={() => setConfirmClose(false)}>Вернуться к форме</button><button className="button primary" onClick={close}>Закрыть без сохранения</button></div></div>}
     <div hidden={confirmClose}><ModalClose.Provider value={requestClose}>{children}</ModalClose.Provider></div>
