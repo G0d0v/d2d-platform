@@ -6,7 +6,7 @@ export function ErrorBox({ error, retry }: { error: Error | null; retry?: () => 
   if (!error) return null;
   return <div className="error-box" role="alert"><AlertCircle size={18}/><div>{error.message}
     {error instanceof ApiError && error.requestId && <small>ID обращения: {error.requestId}</small>}</div>
-    {retry && <button className="button small" onClick={retry}>Обновить</button>}</div>;
+    {retry && <button type="button" className="button small" onClick={retry}>Обновить</button>}</div>;
 }
 const ModalClose = createContext<(() => void) | null>(null);
 export function Modal({ title, children, close }: { title: string; children: ReactNode; close: () => void }) {

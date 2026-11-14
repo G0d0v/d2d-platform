@@ -27,7 +27,7 @@ export function human(actor: Actor) {
 export const publicUser = (u: Row) => ({ id: u.id, login: u.login, display_name: u.display_name, role: u.role });
 export async function newSession(tx: SQL, user: Row, reply: FastifyReply, secure: boolean) {
   const raw = token(), csrf = token();
-  await tx.query('INSERT INTO sessions VALUES ($1,$2,$3,$4)', [digest(raw), user.id, csrf, Date.now() + 7 * 86400000]);
+  await tx.query('INSERT INTO sessions (hash,user_id,csrf,expires_at,created_at) VALUES ($1,$2,$3,$4,$5)', [digest(raw), user.id, csrf, Date.now() + 7 * 86400000, Date.now()]);
   reply.setCookie('d2d_session', raw, { path: '/', httpOnly: true, sameSite: 'strict', secure, maxAge: 7 * 86400 });
   return { user: publicUser(user), csrf };
 }
@@ -41,7 +41,10 @@ export async function createUser(tx: SQL, body: any, registration: string) {
   const user = { id: id(), login: body.login.toLowerCase(), display_name: body.display_name, role: users === 0 ? 'owner' : 'member' };
   await tx.query('INSERT INTO users VALUES ($1,$2,$3,$4,$5,$6,$7)',
     [user.id, user.login, user.display_name, await passwordHash(body.password), digest(recovery), user.role, Date.now()]);
-  if (body.invite) await tx.query('UPDATE invites SET used_by=$1 WHERE hash=$2 AND used_by IS NULL', [user.id, digest(body.invite)]);
+  if (body.invite) {
+    const invite = (await tx.query('UPDATE invites SET used_by=$1 WHERE hash=$2 AND used_by IS NULL RETURNING *', [user.id, digest(body.invite)])).rows[0];
+    if (invite?.project_id) await tx.query('INSERT INTO members VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [invite.project_id,user.id,invite.member_role]);
+  }
   return { user, recovery };
 }
 export async function verifyLogin(tx: SQL, login: string, password: string) {

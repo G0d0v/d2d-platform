@@ -33,7 +33,10 @@ export async function migrate(db: Database) {
   await db.transaction(async tx => {
     await tx.query('SELECT pg_advisory_xact_lock(20261114)');
     await tx.query(`CREATE TABLE IF NOT EXISTS migrations (version integer PRIMARY KEY, applied_at bigint NOT NULL)`);
-    if ((await tx.query('SELECT version FROM migrations WHERE version=1')).rows.length) return;
+    if ((await tx.query('SELECT version FROM migrations WHERE version=1')).rows.length) {
+      await upgrade(tx);
+      return;
+    }
     // Keep statements separate: both node-postgres and PGlite use the same parameterized interface.
     const statements = [
       `CREATE TABLE control (id integer PRIMARY KEY); INSERT INTO control VALUES (1)`,
@@ -80,5 +83,22 @@ export async function migrate(db: Database) {
       for (const part of statement.split(';').filter(x => x.trim())) await tx.query(part);
     }
     await tx.query('INSERT INTO migrations VALUES (1,$1)', [Date.now()]);
+    await upgrade(tx);
   });
+}
+
+async function upgrade(tx: SQL) {
+  if ((await tx.query('SELECT version FROM migrations WHERE version=2')).rows.length) return;
+  for (const sql of [
+    'ALTER TABLE projects ADD COLUMN archived_at bigint',
+    'ALTER TABLE tasks ADD COLUMN archived_at bigint',
+    'ALTER TABLE sessions ADD COLUMN created_at bigint NOT NULL DEFAULT 0',
+    "ALTER TABLE invites ADD COLUMN project_id text REFERENCES projects(id)",
+    "ALTER TABLE invites ADD COLUMN member_role text NOT NULL DEFAULT 'developer'",
+    `CREATE TABLE artifacts (id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id), sha256 text NOT NULL,
+      filename text NOT NULL, bytes integer NOT NULL, files jsonb NOT NULL, recipe jsonb NOT NULL, created_by text NOT NULL REFERENCES users(id), created_at bigint NOT NULL)`,
+    `CREATE TABLE installations (id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id), artifact_id text NOT NULL REFERENCES artifacts(id),
+      token_hash text NOT NULL UNIQUE, expires_at bigint NOT NULL, state text NOT NULL DEFAULT 'pending', host text, message text NOT NULL DEFAULT '', created_by text NOT NULL REFERENCES users(id), created_at bigint NOT NULL, updated_at bigint NOT NULL)`,
+  ]) await tx.query(sql);
+  await tx.query('INSERT INTO migrations VALUES (2,$1)', [Date.now()]);
 }
