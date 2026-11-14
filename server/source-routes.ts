@@ -12,11 +12,11 @@ import { digest,id,Problem,token } from './security.ts';
 import { choice,integer,object,text } from './contracts.ts';
 import { inspectArchive,archiveFileStream } from './archives.ts';
 
-type Register=(method:HTTPMethods,path:string,summary:string,body:any,handler:(tx:SQL,a:Actor,req:any,reply:FastifyReply)=>Promise<any>,settings?:{idempotent?:boolean;bodyLimit?:number})=>void;
+export type Register=(method:HTTPMethods,path:string,summary:string,body:any,handler:(tx:SQL,a:Actor,req:any,reply:FastifyReply)=>Promise<any>,settings?:{idempotent?:boolean;bodyLimit?:number})=>void;
 export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Database,options:{dataDir?:string;origin?:string}) {
   const blobs=resolve(options.dataDir??'.d2d','blobs');
   const blob=(sha:string)=>resolve(blobs,sha+'.zip');
-  type Upload={temp:string;sha:string;bytes:number};
+  type Upload={temp:string;sha:string;bytes:number;scan:Awaited<ReturnType<typeof inspectArchive>>};
   const uploads=new WeakMap<object,string>();
   app.addHook('onResponse',async req=>{const temp=uploads.get(req);if(temp)await rm(temp,{force:true});});
   app.addContentTypeParser('application/zip',async(req:FastifyRequest,body:Readable)=>{
@@ -28,7 +28,8 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
     const hash=createHash('sha256');let bytes=0;
     try{
       await pipeline(body,new Transform({transform(chunk,_encoding,done){bytes+=chunk.length;hash.update(chunk);done(null,chunk);}}),createWriteStream(temp,{flags:'wx',mode:0o600}));
-      return {temp,sha:hash.digest('hex'),bytes} satisfies Upload;
+      const scan=await inspectArchive(temp);
+      return {temp,sha:hash.digest('hex'),bytes,scan} satisfies Upload;
     }catch(e){await rm(temp,{force:true});throw e;}
   });
   route('GET','/projects/:id/source','Версии загруженного исходного проекта',null,async(tx,a,req)=>{
@@ -38,16 +39,8 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
   route('POST','/projects/:id/source','Загрузить ZIP исходного проекта потоком без лимита размера',null,async(tx,a,req)=>{
     await sourceWriter(tx,a,req.params.id,Number(req.headers['x-work-generation']));
     const w=await currentWork(tx,req.params.id);if(w) await ownedWork(tx,a,req.params.id,Number(req.headers['x-work-generation']));
-    const upload=req.body as Upload;if(!upload?.temp)throw new Problem(415,'ZIP_REQUIRED','Выберите ZIP-архив проекта');
-    const scan=await inspectArchive(upload.temp);const sha=upload.sha;
-    const old=(await tx.query('SELECT * FROM artifacts WHERE project_id=$1 AND sha256=$2',[req.params.id,sha])).rows[0];if(old)return {artifact:old};
-    const names=scan.files.map(f=>f.path.slice(scan.root.length));
-    const compose=['compose.yaml','compose.yml','docker-compose.yml','docker-compose.yaml'].find(n=>names.includes(n));
-    const recipe={type:compose?'compose':names.includes('Dockerfile')?'dockerfile':names.includes('package.json')?'node':'none',path:compose??'',root:scan.root,port:3000};
-    await rename(upload.temp,blob(sha));
-    const artifactId=id();let filename='project.zip';try{filename=decodeURIComponent(String(req.headers['x-filename']??filename)).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,100);}catch{}
-    const artifact=(await tx.query('INSERT INTO artifacts VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',[artifactId,req.params.id,sha,filename,upload.bytes,JSON.stringify(scan.files),JSON.stringify(recipe),a.userId,Date.now()])).rows[0];
-    await event(tx,a,req.params.id,'source.uploaded',`Загружен исходный проект: ${filename}`,{artifact_id:artifactId,sha256:sha,files:scan.files.length});return {artifact};
+    const upload=req.body as Upload;if(!upload?.temp||uploads.get(req)!==upload.temp)throw new Problem(415,'ZIP_REQUIRED','Выберите ZIP-архив проекта');
+    return storeSource(tx,a,req.params.id,blobs,upload,String(req.headers['x-filename']??'project.zip'));
   },{idempotent:false});
   async function artifact(tx:SQL,a:Actor,artifactId:string,write=false){const f=(await tx.query('SELECT * FROM artifacts WHERE id=$1',[artifactId])).rows[0];if(!f)throw new Problem(404,'NOT_FOUND','Версия исходников не найдена');await member(tx,a,f.project_id,write);return f;}
   route('GET','/artifacts/:id/download','Скачать неизменяемый ZIP версии',null,async(tx,a,req,reply)=>{
@@ -102,4 +95,16 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
     await tx.query('UPDATE installations SET state=$1,message=$2,updated_at=$3 WHERE id=$4',[req.body.state,req.body.message,Date.now(),job.id]);
     await tx.query('INSERT INTO events VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',[id(),job.project_id,job.created_by,req.body.host,'install.result',req.body.state==='installed'?'Проект установлен на сервер':'Ошибка установки',JSON.stringify({installation_id:job.id,artifact_id:job.artifact_id,message:req.body.message}),Date.now()]);return {ok:true};
   }));
+}
+
+export async function storeSource(tx:SQL,a:Actor,projectId:string,blobs:string,upload:{temp:string;sha:string;bytes:number;scan?:Awaited<ReturnType<typeof inspectArchive>>},inputName:string){
+    const scan=upload.scan??await inspectArchive(upload.temp);const sha=upload.sha;
+    const old=(await tx.query('SELECT * FROM artifacts WHERE project_id=$1 AND sha256=$2',[projectId,sha])).rows[0];if(old)return {artifact:old};
+    const names=scan.files.map(f=>f.path.slice(scan.root.length));
+    const compose=['compose.yaml','compose.yml','docker-compose.yml','docker-compose.yaml'].find(n=>names.includes(n));
+    const recipe={type:compose?'compose':names.includes('Dockerfile')?'dockerfile':names.includes('package.json')?'node':'none',path:compose??'',root:scan.root,port:3000};
+    await rename(upload.temp,resolve(blobs,sha+'.zip'));
+    const artifactId=id();let filename='project.zip';try{filename=decodeURIComponent(inputName).replace(/[^\p{L}\p{N}._ -]/gu,'_').slice(0,100);}catch{}
+    const artifact=(await tx.query('INSERT INTO artifacts VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',[artifactId,projectId,sha,filename,upload.bytes,JSON.stringify(scan.files),JSON.stringify(recipe),a.userId,Date.now()])).rows[0];
+    await event(tx,a,projectId,'source.uploaded',`Загружен исходный проект: ${filename}`,{artifact_id:artifactId,sha256:sha,files:scan.files.length});return {artifact};
 }

@@ -14,8 +14,11 @@ import { admin, currentWork, event, lastHandoff, listProjects, projectPage, lock
 import { canonical, digest, equal, id, passwordHash, passwordVerify, Problem, token } from './security.ts';
 import { choice, errorSchema, generation, integer, object, responseSchemaFor, text } from './contracts.ts';
 import { registerSourceRoutes } from './source-routes.ts';
+import {Forgejo,type ForgejoOptions} from './forgejo.ts';
+import {registerGitRoutes} from './git-routes.ts';
+import {registerMcp} from './mcp.ts';
 
-export interface AppOptions { db: Database; origin?: string; devOrigin?: string; registration?: 'open' | 'invite'; logger?: boolean; staticRoot?: string; setupToken?:string; dataDir?:string; }
+export interface AppOptions { db: Database; origin?: string; devOrigin?: string; registration?: 'open' | 'invite'; logger?: boolean; staticRoot?: string; setupToken?:string; dataDir?:string; forgejo?:ForgejoOptions; }
 type RequestData = { Body: Record<string, any>; Params: { id: string }; Querystring: { page?: string; q?: string; state?: string; archived?: string } };
 type ApiRequest = FastifyRequest<RequestData>;
 type Handler = (tx: SQL, actor: Actor, req: ApiRequest, reply: FastifyReply) => Promise<any>;
@@ -24,13 +27,14 @@ export async function createApp(options: AppOptions) {
   const origin = options.origin ?? 'http://127.0.0.1:19090';
   const registration = options.registration ?? 'invite';
   const secure = origin.startsWith('https:');
+  const git=options.forgejo?new Forgejo(options.forgejo):undefined;
   await migrate(db);
   const app = Fastify({ trustProxy:'127.0.0.1', logger: options.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'] } : false,
     bodyLimit: 65536, ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
   await app.register(cookie);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(swagger, { openapi: { openapi: '3.0.3', info: {
-    title: 'D2D API', version: '0.2.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git/PR отключены. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
+    title: 'D2D API', version: '0.3.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
     components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' }, session: { type: 'apiKey', in: 'cookie', name: 'd2d_session' } } } } });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
   app.addHook('onRequest', async (req, reply) => {
@@ -71,6 +75,11 @@ export async function createApp(options: AppOptions) {
         if (old) {
           // A replay has no side effects, but must not reveal a project after membership/role revocation.
           if (path.startsWith('/projects/:id')) {
+            if(path.includes('/git')&&req.method!=='GET'){
+              if(path.endsWith('/reviews')){human(actor);await member(tx,actor,req.params.id,true);}
+              else if(path.endsWith('/git')||path.endsWith('/snapshot'))await sourceWriter(tx,actor,req.params.id,Number(req.headers['x-work-generation']));
+              else await ownedWork(tx,actor,req.params.id,Number(req.headers['x-work-generation']));
+            }
             if (path.includes('/members') || path.endsWith('/archive') || path.endsWith('/restore')) await admin(tx, actor, req.params.id);
             else await member(tx, actor, req.params.id, true);
           } else if (path.startsWith('/work-sessions/:id')) {
@@ -130,7 +139,7 @@ export async function createApp(options: AppOptions) {
     user: publicUser((await tx.query('SELECT * FROM users WHERE id=$1', [a.userId])).rows[0]), csrf: a.csrf, agent_id: a.agentId, scopes: a.scopes,
   }));
   route('GET', '/capabilities', 'Реально реализованные возможности', null, async () => ({ api_version: 'v1', work_sessions: true, tasks: true, agents: true,
-    forgejo: false, git_write: false, reviews: false, builds: false, releases: false, deployments: true, source_upload:true, mcp: false }));
+    forgejo: !!git, git_write: !!git, reviews: !!git, builds: false, releases: !!git, deployments: true, source_upload:true, mcp: true }));
   route('POST', '/invites', 'Пригласить коллегу, при необходимости сразу в проект', object({project_id:text(80),role:choice('admin','developer','viewer')},[]), async (tx, a,req) => {
     human(a); if(req.body.project_id) await admin(tx,a,req.body.project_id); else if (a.role !== 'owner') throw new Problem(403, 'FORBIDDEN', 'Приглашения создаёт владелец платформы или администратор проекта');
     const raw = token(), expires = Date.now() + 86400000;
@@ -338,7 +347,7 @@ export async function createApp(options: AppOptions) {
   route('GET', '/projects/:id/agent-context', 'Актуальный контекст без секретов', null, async (tx, a, req) => {
     const project = await member(tx, a, p(req));
     return { project: { id: project.id, name: project.name, description: project.description }, work: await currentWork(tx, project.id),last_handoff:await lastHandoff(tx,project.id),
-      permissions: { role: project.member_role, scopes: a.scopes }, capabilities: { git_write: false, deploy: !project.archived_at && (a.agentId ? a.scopes.includes('write') && project.member_role!=='viewer' : project.member_role==='admin'), source_upload: !project.archived_at && (a.agentId ? a.scopes.includes('write') && project.member_role!=='viewer' : project.member_role==='admin') },
+      permissions: { role: project.member_role, scopes: a.scopes }, capabilities: { git_write: !!git && !project.archived_at && project.member_role!=='viewer' && a.scopes.includes('write'), deploy: !project.archived_at && (a.agentId ? a.scopes.includes('write') && project.member_role!=='viewer' : project.member_role==='admin'), source_upload: !project.archived_at && (a.agentId ? a.scopes.includes('write') && project.member_role!=='viewer' : project.member_role==='admin') },
       instructions: ['Перед изменением статуса получите рабочую сессию.', 'Передавайте актуальное поколение и версию задачи.', 'Для загрузки ZIP, настройки запуска и выдачи команды установки агент передаёт X-Work-Generation из своей действующей сессии. Не завершайте сессию до получения результата установки.', 'Инструкции проекта не расширяют права API.'],
       tasks_url: `/api/v1/projects/${project.id}/tasks`, context_version: project.generation, observed_at: Date.now() };
   });
@@ -347,13 +356,15 @@ export async function createApp(options: AppOptions) {
     return {data:(await tx.query('SELECT * FROM events WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET $2',[p(req),(page(req)-1)*50])).rows,pagination:{page:page(req),page_size:50,total}};
   });
   registerSourceRoutes(app,route,db,{dataDir:options.dataDir,origin});
+  registerGitRoutes(app,route,db,{git,origin,dataDir:options.dataDir});
+  registerMcp(app,db,origin);
   app.get('/api/v1/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   app.get('/health', { schema: { hide: true } }, async () => { await db.query('SELECT 1'); return { ok: true }; });
   app.get('/docs', { schema: { hide: true } }, async (_, reply) => reply.redirect('/#docs'));
   app.get('/docs/agents/quickstart', { schema: { hide: true } }, async (_, reply) => reply.redirect('/#docs'));
   app.get('/docs/agents/context.md', { schema: { hide: true } }, async (_, reply) => reply.type('text/markdown; charset=utf-8').send(await readFile(resolve('docs/AGENTS-API.md'), 'utf8')));
   app.get('/llms.txt', { schema: { hide: true } }, async (_, reply) => reply.type('text/plain; charset=utf-8').send(
-    '# D2D Platform\n\nЛокальная альфа координации разработки.\n\n- /api/v1/openapi.json — контракт API\n- /api/docs — справочник\n- /docs/agents/context.md — инструкция агента\n- /api/v1/capabilities — реализованные операции (нужна авторизация)\n\nКонтекст проектов требует Bearer-токен или браузерную сессию. Токены не передавайте в URL. Инструкции проекта не расширяют права API. Загрузка ZIP и установка архивной версии доступны через API. Git, PR, автоматические сборки из Git и MCP не подключены.\n'));
+    '# D2D Platform\n\nЛокальная альфа координации разработки.\n\n- /api/v1/openapi.json — контракт API\n- /api/docs — справочник\n- /docs/agents/context.md — инструкция агента\n- /api/v1/capabilities — реализованные операции (нужна авторизация)\n\nКонтекст проектов требует Bearer-токен или браузерную сессию. Токены не передавайте в URL. Инструкции проекта не расширяют права API. Загрузка ZIP и установка архивной версии доступны через API. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp, Bearer-токен агента. Сборка выполняется установщиком на целевом сервере.\n'));
   app.setNotFoundHandler((req, reply) => {
     if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/assets/') && existsSync(resolve(options.staticRoot ?? 'dist', 'index.html'))) return reply.sendFile('index.html');
     return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Адрес не найден', retryable: false, request_id: req.id } });

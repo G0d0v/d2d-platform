@@ -3,5 +3,5 @@ Description=Backup D2D database and project archives
 After=postgresql.service
 [Service]
 Type=oneshot
-ExecStart=/opt/d2d/current/deploy/backup.sh
+ExecStart=/usr/bin/bash /opt/d2d/current/deploy/backup.sh
 UMask=0077

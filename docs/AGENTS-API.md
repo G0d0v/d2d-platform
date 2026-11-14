@@ -1,6 +1,6 @@
 # Выполните задачу через API или CLI
 
-Руководство для ИИ-агента с доступом к HTTP или shell. Вы получите контекст проекта, начнёте рабочую сессию и сохраните итог. Git отключён. Токен «Чтение и разработка» (`read`, `write`) позволяет загрузить ZIP, настроить запуск и выдать команду установки в своём проекте.
+Руководство для ИИ-агента с доступом к HTTP или shell. Вы получите контекст проекта, начнёте рабочую сессию и сохраните итог. Git доступен, когда в контексте `capabilities.git_write=true`. Токен «Чтение и разработка» (`read`, `write`) позволяет загрузить ZIP, настроить запуск и выдать команду установки в своём проекте.
 
 ## Подготовьте доступ
 
@@ -59,7 +59,7 @@ CLI печатает ключ в stderr до отправки. В stdout нах�
 
 Используйте `/api/v1/openapi.json` установленного экземпляра и `/api/docs`. Списки проектов, задач и аудита принимают `?page=N`, размер страницы — 50; ответ содержит `data` и `pagination`. В карточке проекта сокращённые списки ограничены 500 задачами и 100 событиями; для полной истории используйте списочные endpoints.
 
-Перед поставкой проверьте `/api/v1/projects/PROJECT_ID/agent-context`: `capabilities.deploy` и `source_upload` учитывают ваши права. Git-запись пока отключена.
+Перед поставкой проверьте `/api/v1/projects/PROJECT_ID/agent-context`: `capabilities.deploy` и `source_upload` учитывают ваши права. Доступность Git-записи зависит от подключения Forgejo и ваших прав.
 
 
 ## Изменения версии 0.2
@@ -84,3 +84,27 @@ CLI печатает ключ в stderr до отправки. В stdout нах�
 5. Проверяйте `GET /api/v1/projects/PROJECT_ID/source`, отправляйте heartbeat и завершите сессию только после результата установки. Отзыв/истечение токена, передача/завершение сессии блокируют выданную агентом команду установки.
 
 Для этих операций права `read` недостаточно. Управление участниками и выдача токенов агенту недоступны. Уже выданный токен `write` продолжает работать, перевыпуск не нужен.
+
+## Git, проверка и версии
+
+- `GET /api/v1/projects/ID/git` — состояние, ветки и `clone_url`.
+- `POST /api/v1/projects/ID/git` с `{}` — включить приватный репозиторий.
+- Native Git: логин `d2d`, пароль — действующий токен D2D. Для push получите сессию, настройте `git config http.extraHeader "X-Work-Generation: GENERATION"`. Токен передавайте через защищённый credential helper, не URL.
+- `POST /api/v1/projects/ID/git/import` с `{"artifact_id":"ID","message":"Импорт проекта"}` — архив отдельным коммитом: первый в main, следующий в ветку сессии. Существующую Git-историю сохраняйте через native push.
+- `GET .../git/tree?ref=BRANCH&path=DIR`, `GET .../git/raw?ref=SHA&path=FILE`, `GET .../git/commits?ref=BRANCH&page=1` — файлы и история.
+- `POST .../git/branches` с `{"name":"feature/name","from":"main"}` — ветка.
+- `POST .../git/pulls` с `{"title":"Название","body":"Что сделано и как проверено","head":"feature/name","base":"main"}` — проверка. Список: `GET .../git/pulls`; diff: `GET .../git/diff?number=1`.
+- Проверку `POST .../git/reviews` с `{"number":1,"head_sha":"SHA","state":"approved","body":"Проверено"}` выполняет другой человек. Допустимо `changes_requested`.
+- `POST .../git/merge` с `{"number":1,"head_sha":"SHA"}` — человек со своей сессией и актуальным одобрением объединяет изменения. Новые коммиты требуют новой проверки.
+- `POST .../git/releases` с `{"tag":"v2.6.0","name":"Версия 2.6.0","body":"Изменения","ref":"main"}` — версия в Git.
+- `POST .../git/snapshot` с `{"ref":"v2.6.0"}` — архив точного коммита для установки. Дальше используйте `/artifacts/ID/installations`.
+
+Все мутации Git через JSON API требуют `Idempotency-Key`. Запись агента, native push, импорт, ветки, PR, merge и публикация версии требуют `X-Work-Generation`. Проверка другим человеком не требует захвата проекта. Forgejo обрабатывает обновление своих метаданных после push асинхронно: при кратковременно пустом списке перечитайте его. Сборка выполняется установщиком на целевом сервере; отдельный CI runner не включён.
+
+## MCP
+
+Адрес: `https://d2d.darkgpt.cfd/mcp`. Транспорт — Streamable HTTP (JSON-ответы без SSE). Аутентификация — заголовок `Authorization: Bearer D2D_TOKEN`; токен тот же, что для HTTP API, и ограничен проектом. Самостоятельная регистрация новых глобальных прав не нужна. Клиент должен поддерживать пользовательский Bearer-токен. OAuth-discovery не реализован.
+
+Поддерживаются `initialize`, `ping`, `tools/list`, `tools/call`. Версии протокола: 2025-11-25, 2025-06-18 и 2025-03-26. Инструменты: `projects`, `project_context`, `tasks`, `source_versions`, `git_status`, `start_work`, `heartbeat`, `finish_work`, `git_snapshot`, `installation_command`. Только чтение скрывает мутации из списка и не разрешает их прямой вызов. Ключ `idempotency_key` обязателен для повторяемых мутаций. Команда установки выдаётся один раз; её ответ содержит секрет.
+
+Реализация следует [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) и [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).

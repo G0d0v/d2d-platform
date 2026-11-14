@@ -20,7 +20,7 @@ export async function api<T = any>(path: string, method = 'GET', body?: unknown,
     response = await fetch(`/api/v1${path}`, { method, credentials: 'same-origin', headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(mutation ? { 'X-CSRF-Token': csrf, 'Idempotency-Key': pending.get(intent)! } : {}), ...extra,
-    }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000) });
+    }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(/\/git\/(import|snapshot)$/.test(path)?3600000:20000) });
   } catch { throw new ApiError('Нет связи с сервером. Проверьте подключение и обновите данные.'); }
   const data = await responseJson(response);
   // A lost response keeps the intent key so a manual retry is safe within this page.

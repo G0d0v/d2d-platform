@@ -21,6 +21,7 @@ test('исходный проект: загрузка, просмотр, изо�
   try{
     const a=await account('owner'),b=await account('outsider');const p=(await call(a,'POST','/projects',{name:'Исходный проект',slug:'source'})).json().project;
     const zip=zipFiles({'sample/Dockerfile':'FROM busybox:1.37\nCMD ["httpd","-f","-p","3000"]\n','sample/README.md':'# Example'});
+    assert.equal((await call(a,'POST',`/projects/${p.id}/source`,{temp:join(directory,'private.zip'),sha:'forged',bytes:1})).statusCode,415);
     const upload=await call(a,'POST',`/projects/${p.id}/source`,zip,{'content-type':'application/zip','x-filename':'sample.zip'});assert.equal(upload.statusCode,200,upload.body);const f=upload.json().artifact;assert.equal(f.recipe.type,'dockerfile');
     const duplicate=await call(a,'POST',`/projects/${p.id}/source`,zip,{'content-type':'application/zip'});assert.equal(duplicate.json().artifact.id,f.id);
     assert.equal((await call(b,'GET',`/artifacts/${f.id}/download`)).statusCode,404);

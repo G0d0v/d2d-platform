@@ -12,6 +12,9 @@ npm --silent run cli -- capabilities
 npm --silent run cli -- projects [--page 1]
 npm --silent run cli -- context --project ID
 npm --silent run cli -- tasks --project ID [--page 1]
+npm --silent run cli -- git status --project ID
+npm --silent run cli -- git commits --project ID [--ref main]
+npm --silent run cli -- git snapshot --project ID --ref REF --generation N
 npm --silent run cli -- task create --project ID --title ТЕКСТ [--description-file ФАЙЛ]
 npm --silent run cli -- task status --task ID --status todo|in_progress|review|done --version N --generation N
 npm --silent run cli -- work start --project ID --note-file ФАЙЛ [--task ID] [--minutes 120]
@@ -22,12 +25,12 @@ npm --silent run cli -- work finish --session ID --generation N --summary-file �
 
 Любая мутация: [--key UUID]. Сохраните ключ для повтора после потери ответа.
 --json: машинный JSON. Коды выхода: 0 успех, 2 аргументы/конфигурация, 3 API, 4 неизвестный результат/сеть.
-Git, PR, сборки, релизы и деплой не реализованы. Авторизация и права проверяются сервером.`;
+Git и установка доступны через API и native Git; наличие интеграции проверяется командой capabilities. Авторизация и права проверяются сервером.`;
 async function main() {
   const { positionals: [command, action], values: flags } = parseArgs({ allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' }, project: { type: 'string' }, task: { type: 'string' },
     session: { type: 'string' }, generation: { type: 'string' }, minutes: { type: 'string' }, version: { type: 'string' },
-    status: { type: 'string' }, title: { type: 'string' }, page: { type: 'string' }, key: { type: 'string' },
+    ref: { type: 'string' }, status: { type: 'string' }, title: { type: 'string' }, page: { type: 'string' }, key: { type: 'string' },
     'note-file': { type: 'string' }, 'summary-file': { type: 'string' }, 'description-file': { type: 'string' },
   } });
   if (flags.help || !command) { console.log(usage); return; }
@@ -41,6 +44,9 @@ async function main() {
   else if (command === 'capabilities') path = '/capabilities';
   else if (command === 'projects') path = `/projects?page=${flags.page ? number('page') : 1}`;
   else if (command === 'context') path = `/projects/${segment('project')}/agent-context`;
+  else if(command==='git'&&action==='status')path=`/projects/${segment('project')}/git`;
+  else if(command==='git'&&action==='commits')path=`/projects/${segment('project')}/git/commits?ref=${encodeURIComponent(flags.ref??'main')}`;
+  else if(command==='git'&&action==='snapshot'){method='POST';path=`/projects/${segment('project')}/git/snapshot`;body={ref:need('ref')};headers['X-Work-Generation']=String(number('generation'));}
   else if (command === 'tasks') path = `/projects/${segment('project')}/tasks?page=${flags.page ? number('page') : 1}`;
   else if (command === 'task' && action === 'create') {
     method = 'POST'; path = `/projects/${segment('project')}/tasks`; body = { title: need('title'), description: flags['description-file'] ? await file('description-file') : '' };
@@ -66,7 +72,7 @@ async function main() {
     console.error(`Idempotency-Key: ${headers['Idempotency-Key']}`);
   }
   let response: Response;
-  try { response = await fetch(new URL(`/api/v1${path}`, origin), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(20000) }); }
+  try { response = await fetch(new URL(`/api/v1${path}`, origin), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(command==='git'&&action==='snapshot'?3600000:20000) }); }
   catch { console.error('Нет подтверждённого ответа. Проверьте состояние и повторите с тем же --key; автоматического повтора нет.'); process.exitCode = 4; return; }
   const result = await response.json(); console.log(JSON.stringify(result, null, flags.json ? undefined : 2));
   if (!response.ok) process.exitCode = 3;

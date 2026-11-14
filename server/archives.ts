@@ -2,6 +2,26 @@ import yauzl from 'yauzl';
 import {crc32} from 'node:zlib';
 import { Problem } from './security.ts';
 import type { Readable } from 'node:stream';
+import {createWriteStream} from 'node:fs';
+import {mkdir} from 'node:fs/promises';
+import {pipeline} from 'node:stream/promises';
+import {resolve,dirname,sep} from 'node:path';
+
+export async function extractArchive(filename:string,directory:string,root:string):Promise<void>{
+  return new Promise((done,reject)=>yauzl.open(filename,{lazyEntries:true,validateEntrySizes:true},(error,zip)=>{
+    if(error||!zip)return reject(new Problem(422,'INVALID_ARCHIVE','Не удалось прочитать архив'));
+    const fail=(e:Error)=>{zip.close();reject(e);};zip.on('error',fail);zip.on('end',done);
+    zip.on('entry',entry=>{
+      if(entry.fileName.endsWith('/')){zip.readEntry();return;}
+      const target=resolve(directory,entry.fileName.slice(root.length));
+      if(!entry.fileName.startsWith(root)||!target.startsWith(resolve(directory)+sep)||entry.fileName.split('/').includes('.git'))return fail(new Problem(422,'UNSAFE_ARCHIVE','Небезопасный путь'));
+      zip.openReadStream(entry,(e,stream)=>{
+        if(e||!stream)return fail(new Problem(422,'INVALID_ARCHIVE','Не удалось прочитать файл'));
+        void mkdir(dirname(target),{recursive:true}).then(()=>pipeline(stream,createWriteStream(target,{flags:'wx',mode:((entry.externalFileAttributes>>>16)&0o111)?0o700:0o600}))).then(()=>zip.readEntry()).catch(fail);
+      });
+    });zip.readEntry();
+  }));
+}
 
 export async function archiveFileStream(filename:string,path:string):Promise<Readable>{
   return new Promise((resolve,reject)=>yauzl.open(filename,{lazyEntries:true},(error,zip)=>{

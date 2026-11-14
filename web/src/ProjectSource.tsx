@@ -1,9 +1,9 @@
 import {SourceBrowser} from './SourceBrowser.tsx';
-import {useEffect,useRef,useState} from 'react';import {Download,Upload,Server,FileCode2} from 'lucide-react';
+import {useEffect,useRef,useState} from 'react';import {Download,Upload,Server} from 'lucide-react';
 import {api,uploadZip} from './api.ts';import {ActionForm,date,Empty,ErrorBox,Field,Modal,Secret} from './components.tsx';import type {Work} from '../../server/contracts.ts';
 import {captureWork,requireWorkIntent,type WorkIntent} from './work-intent.ts';
 export function ProjectSource({projectId,canAdmin,work}:{projectId:string;canAdmin:boolean;work:Work|null}){
- const [artifacts,setArtifacts]=useState<any[]>([]),[jobs,setJobs]=useState<any[]>([]),[selected,setSelected]=useState(''),[error,setError]=useState<Error|null>(null),[busy,setBusy]=useState(false),[recipe,setRecipe]=useState(false),[command,setCommand]=useState(''),[file,setFile]=useState<{path:string;content:string}|null>(null),[q,setQ]=useState('');const input=useRef<HTMLInputElement>(null);
+ const [artifacts,setArtifacts]=useState<any[]>([]),[jobs,setJobs]=useState<any[]>([]),[selected,setSelected]=useState(''),[error,setError]=useState<Error|null>(null),[busy,setBusy]=useState(false),[recipe,setRecipe]=useState(false),[command,setCommand]=useState('');const input=useRef<HTMLInputElement>(null);
  const artifact=artifacts.find(a=>a.id===selected)??artifacts[0];
  const uploadIntent=useRef<WorkIntent|null>(null);
  async function load(){try{const r=await api(`/projects/${projectId}/source`);setArtifacts(r.artifacts);setSelected(current=>r.artifacts.some((a:any)=>a.id===current)?current:r.artifacts[0]?.id??'');setJobs(r.installations);setError(null);}catch(e){setError(e as Error);}}
@@ -19,6 +19,5 @@ export function ProjectSource({projectId,canAdmin,work}:{projectId:string;canAdm
  </>}
  {recipe&&artifact&&<Modal title="Настроить запуск версии" close={()=>setRecipe(false)}><ActionForm label="Сохранить" close={()=>setRecipe(false)} submit={async data=>{await api(`/artifacts/${artifact.id}/recipe`,'PATCH',{type:data.get('type'),path:data.get('path'),port:Number(data.get('port'))});setRecipe(false);await load();}}><Field label="Способ запуска"><select name="type" defaultValue={artifact.recipe.type}><option value="compose">Docker Compose</option><option value="dockerfile">Dockerfile</option><option value="node">Node.js — npm start</option><option value="none">Пока без установки</option></select></Field><Field label="Compose-файл относительно корня проекта" hint="Нужен только для Docker Compose"><input name="path" maxLength={200} defaultValue={artifact.recipe.path} placeholder="compose.yaml"/></Field><Field label="Порт приложения" hint="Для Node.js и Dockerfile. В Compose берётся из файла."><input name="port" type="number" min={1} max={65535} required defaultValue={artifact.recipe.port}/></Field></ActionForm></Modal>}
  {command&&<Modal title="Установить проект на свой сервер" close={()=>setCommand('')}><ol className="install-steps"><li>Подключитесь по SSH к своему серверу от root.</li><li>Проверьте исходники и инструкцию запуска выбранной версии.</li><li>Выполните команду. Она действует один час и закрепляется за первым сервером.</li><li>Дождитесь результата. Статус появится здесь автоматически.</li></ol><Secret value={command} label="Команда содержит временный токен только этой установки. Сохраните её до окончания установки."/><p className="muted">При ошибке установщик попытается вернуть предыдущую версию. Данные и Docker volumes не удаляются.</p></Modal>}
- {file&&<Modal title={file.path} close={()=>setFile(null)}><pre className="source-preview">{file.content}</pre></Modal>}
  </>;
 }

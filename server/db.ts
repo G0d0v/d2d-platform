@@ -113,9 +113,18 @@ async function installSnapshots(tx:SQL){
 }
 
 async function agentInstallations(tx:SQL){
-  if((await tx.query('SELECT version FROM migrations WHERE version=4')).rows.length)return;
+  if((await tx.query('SELECT version FROM migrations WHERE version=4')).rows.length){await gitSchema(tx);return;}
   await tx.query('ALTER TABLE installations ADD COLUMN agent_id text REFERENCES agents(id)');
   await tx.query('ALTER TABLE installations ADD COLUMN work_generation integer');
   await tx.query('ALTER TABLE artifacts ALTER COLUMN bytes TYPE double precision');
   await tx.query('INSERT INTO migrations VALUES (4,$1)',[Date.now()]);
+  await gitSchema(tx);
+}
+
+async function gitSchema(tx:SQL){
+  if((await tx.query('SELECT version FROM migrations WHERE version=5')).rows.length)return;
+  await tx.query('ALTER TABLE artifacts ADD COLUMN commit_sha text');
+  await tx.query(`CREATE TABLE git_changes (project_id text NOT NULL REFERENCES projects(id),number integer NOT NULL,author_id text NOT NULL,author_user_id text NOT NULL REFERENCES users(id),created_at bigint NOT NULL,PRIMARY KEY(project_id,number))`);
+  await tx.query(`CREATE TABLE git_reviews (id text PRIMARY KEY,project_id text NOT NULL REFERENCES projects(id),number integer NOT NULL,reviewer_id text NOT NULL REFERENCES users(id),head_sha text NOT NULL,state text NOT NULL,body text NOT NULL,created_at bigint NOT NULL)`);
+  await tx.query('INSERT INTO migrations VALUES (5,$1)',[Date.now()]);
 }
