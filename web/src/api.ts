@@ -8,7 +8,7 @@ async function responseJson(response:Response){
   try{return await response.json();}catch{throw new ApiError(response.status>=500?'Сервер временно недоступен или обновляется. Обновите данные через несколько секунд.':'Сервер вернул неожиданный ответ. Обновите данные перед повтором действия.',response.status>=500?'SERVER_UNAVAILABLE':'UNEXPECTED_RESPONSE');}
 }
 export async function uploadZip(projectId:string,file:File,generation?:number){
-  let response:Response;try{response=await fetch(`/api/v1/projects/${projectId}/source`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/zip','X-CSRF-Token':csrf,'X-Filename':encodeURIComponent(file.name),...(generation?{'X-Work-Generation':String(generation)}:{})},body:file,signal:AbortSignal.timeout(120000)});}catch{throw new ApiError('Не получено подтверждение загрузки. Обновите список версий перед повтором.');}
+  let response:Response;try{response=await fetch(`/api/v1/projects/${projectId}/source`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/zip','X-CSRF-Token':csrf,'X-Filename':encodeURIComponent(file.name),...(generation?{'X-Work-Generation':String(generation)}:{})},body:file});}catch{throw new ApiError('Не получено подтверждение загрузки. Обновите список версий перед повтором.');}
   const data=await responseJson(response);if(!response.ok)throw new ApiError(data.error?.message??'Не удалось загрузить проект',data.error?.code,data.error?.request_id);return data;
 }
 export async function api<T = any>(path: string, method = 'GET', body?: unknown, extra: Record<string, string> = {}): Promise<T> {

@@ -20,6 +20,10 @@ export async function admin(tx: SQL, actor: Actor, projectId: string) {
   if (actor.agentId || row.member_role !== 'admin') throw new Problem(403, 'FORBIDDEN', 'Нужны права администратора проекта');
   return row;
 }
+export async function sourceWriter(tx: SQL, actor: Actor, projectId: string, generation?: number) {
+  if (!actor.agentId) { await admin(tx, actor, projectId); await member(tx, actor, projectId, true); return; }
+  await ownedWork(tx, actor, projectId, generation);
+}
 export async function lockProject(tx: SQL, projectId: string) {
   await tx.query('SELECT id FROM projects WHERE id=$1 FOR UPDATE', [projectId]);
   await tx.query(`UPDATE work_sessions SET state='expired' WHERE project_id=$1 AND state IN ('active','paused','review') AND expires_at<=$2`, [projectId, Date.now()]);

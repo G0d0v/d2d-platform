@@ -42,7 +42,7 @@ export function responseSchemaFor(method: string, path: string): any {
     permissions: responseObject({ role: text(), scopes: arrayOf(text()) }), capabilities: { type: 'object', additionalProperties: { type: 'boolean' } }, instructions: arrayOf(text()), tasks_url: text(), context_version: integer(0, 2147483647), observed_at: timestamp });
   if (path === '/projects/:id/agents') return responseObject({ id: text(), token: text(), expires_at: timestamp });
   if (path === '/invites') return responseObject({ invite: text(), expires_at: timestamp });
-  if (path === '/capabilities') return responseObject({ api_version: text(), work_sessions: { type: 'boolean' }, tasks: { type: 'boolean' }, agents: { type: 'boolean' }, forgejo: { type: 'boolean' }, git_write: { type: 'boolean' }, reviews: { type: 'boolean' }, builds: { type: 'boolean' }, releases: { type: 'boolean' }, deployments: { type: 'boolean' }, mcp: { type: 'boolean' } });
+  if (path === '/capabilities') return responseObject({ api_version: text(), work_sessions: { type: 'boolean' }, tasks: { type: 'boolean' }, agents: { type: 'boolean' }, forgejo: { type: 'boolean' }, git_write: { type: 'boolean' }, reviews: { type: 'boolean' }, builds: { type: 'boolean' }, releases: { type: 'boolean' }, deployments: { type: 'boolean' }, source_upload: { type: 'boolean' }, mcp: { type: 'boolean' } });
   if (path.endsWith('/transfer-requests')) return responseObject({ id: text() });
   return responseObject({ ok: { type: 'boolean' } });
 }

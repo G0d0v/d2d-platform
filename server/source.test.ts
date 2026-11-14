@@ -39,3 +39,51 @@ test('исходный проект: загрузка, просмотр, изо�
     await db.query('UPDATE installations SET expires_at=$1 WHERE id=$2',[Date.now()-1,job.id]);assert.equal((await install('GET','archive')).statusCode,401);
   }finally{await app.close();await db.close();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(basename(target).startsWith('d2d-source-test-'));await rm(target,{recursive:true,force:true});}
 });
+
+
+test('агент write поставляет архивы, read и отозванные/устаревшие доступы заблокированы',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'d2d-source-test-'));const db=await database();const app=await createApp({db,registration:'open',dataDir:directory});
+  async function call(c:any,method:any,path:string,body?:any,headers={}){return app.inject({method,url:'/api/v1'+path,...(body===undefined?{}:{payload:body}),headers:{...c,'idempotency-key':randomUUID(),...headers}});}
+  try{
+    const reg=await call({},'POST','/auth/register',{login:'publisher',display_name:'Publisher',password:'source-test-password-123'});
+    const owner={cookie:`d2d_session=${reg.cookies[0].value}`,'x-csrf-token':reg.json().csrf};
+    const p=(await call(owner,'POST','/projects',{name:'Agent source',slug:'agent-source'})).json().project;
+    const other=(await call(owner,'POST','/projects',{name:'Other',slug:'other'})).json().project;
+    const agent=async(scopes:string[])=>{const r=await call(owner,'POST',`/projects/${p.id}/agents`,{name:'tester',scopes,hours:1});assert.equal(r.statusCode,200,r.body);return {id:r.json().id,headers:{authorization:'Bearer '+r.json().token}};};
+    const write=await agent(['read','write']),read=await agent(['read']);
+    const zip=zipFiles({'Dockerfile':'FROM busybox:1.37','large.txt':'x'.repeat(26*1024*1024)});
+    const zipHeaders={'content-type':'application/zip'};
+    assert.equal((await call(read.headers,'GET',`/projects/${p.id}/agent-context`)).json().capabilities.deploy,false);
+    assert.equal((await call(write.headers,'GET',`/projects/${p.id}/agent-context`)).json().capabilities.deploy,true);
+    assert.equal((await call(read.headers,'POST',`/projects/${p.id}/source`,zip,zipHeaders)).statusCode,403);
+    assert.equal((await call(write.headers,'POST',`/projects/${other.id}/source`,zip,zipHeaders)).statusCode,404);
+    assert.equal((await call(write.headers,'POST',`/projects/${p.id}/source`,zip,zipHeaders)).json().error.code,'LEASE_EXPIRED');
+    const start=await call(write.headers,'POST',`/projects/${p.id}/work-sessions`,{note:'Publish'});assert.equal(start.statusCode,200,start.body);const w=start.json().work;
+    const h={'x-work-generation':String(w.generation)};
+    const uploaded=await call(write.headers,'POST',`/projects/${p.id}/source`,zip,{...zipHeaders,...h});assert.equal(uploaded.statusCode,200,uploaded.body);const f=uploaded.json().artifact;assert.equal(f.bytes,zip.length);
+    const rawFile=await call(write.headers,'GET',`/artifacts/${f.id}/raw?path=large.txt`);assert.equal(rawFile.statusCode,200);assert.equal(rawFile.rawPayload.length,26*1024*1024);
+    assert.equal((await call({},'GET',`/artifacts/${f.id}/raw?path=large.txt`)).statusCode,401);
+    assert.equal((await call(write.headers,'GET',`/artifacts/${f.id}/raw?path=../secret`)).statusCode,404);
+    const recipe={type:'dockerfile',path:'',port:3000},key=randomUUID();
+    assert.equal((await call(read.headers,'PATCH',`/artifacts/${f.id}/recipe`,recipe,h)).statusCode,403);
+    assert.equal((await call(write.headers,'PATCH',`/artifacts/${f.id}/recipe`,recipe,{'idempotency-key':key,...h})).statusCode,200);
+    assert.equal((await call(write.headers,'PATCH',`/artifacts/${f.id}/recipe`,recipe,{'idempotency-key':key,...h})).statusCode,200);
+    assert.equal((await call(write.headers,'POST',`/artifacts/${f.id}/installations`,{}, {'x-work-generation':String(w.generation+1)})).json().error.code,'STALE_LEASE');
+    assert.equal((await call(read.headers,'POST',`/artifacts/${f.id}/installations`,{},h)).statusCode,403);
+    const issue=await call(write.headers,'POST',`/artifacts/${f.id}/installations`,{},h);assert.equal(issue.statusCode,200,issue.body);
+    const job=issue.json(),raw=job.command.match(/D2D_INSTALL_TOKEN='([^']+)'/)[1];
+    const claim=()=>app.inject({method:'POST',url:`/api/install/${job.id}/claim`,payload:{host:'agent-server'},headers:{authorization:'Bearer '+raw}});
+    assert.equal((await claim()).statusCode,200);
+    await db.query('UPDATE agents SET expires_at=$1 WHERE id=$2',[Date.now()-1,write.id]);assert.equal((await claim()).statusCode,401);
+    await db.query('UPDATE agents SET expires_at=$1 WHERE id=$2',[Date.now()+3600000,write.id]);
+    await db.query("UPDATE members SET role='viewer' WHERE project_id=$1 AND user_id=$2",[p.id,reg.json().user.id]);assert.equal((await claim()).statusCode,401);
+    await db.query("UPDATE members SET role='admin' WHERE project_id=$1 AND user_id=$2",[p.id,reg.json().user.id]);
+    const handoff=await call(owner,'POST',`/work-sessions/${w.id}/handoff`,{generation:w.generation,to_user_id:reg.json().user.id,summary:'Take over'});assert.equal(handoff.statusCode,200,handoff.body);
+    assert.equal((await claim()).statusCode,401);
+    assert.equal((await call(write.headers,'PATCH',`/artifacts/${f.id}/recipe`,recipe,{'idempotency-key':key,...h})).statusCode,409);
+    assert.equal((await call(write.headers,'POST',`/projects/${p.id}/source`,zip,{...zipHeaders,...h})).statusCode,409);
+    await call(owner,'POST',`/agents/${write.id}/revoke`,{});
+    assert.equal((await call(write.headers,'POST',`/projects/${p.id}/source`,zip,{...zipHeaders,...h})).statusCode,401);
+    assert.equal((await claim()).statusCode,401);
+  }finally{await app.close();await db.close();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(basename(target).startsWith('d2d-source-test-'));await rm(target,{recursive:true,force:true});}
+});

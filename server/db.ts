@@ -105,8 +105,17 @@ async function upgrade(tx: SQL) {
 }
 
 async function installSnapshots(tx:SQL){
-  if((await tx.query('SELECT version FROM migrations WHERE version=3')).rows.length)return;
+  if((await tx.query('SELECT version FROM migrations WHERE version=3')).rows.length){await agentInstallations(tx);return;}
   await tx.query("ALTER TABLE installations ADD COLUMN recipe jsonb NOT NULL DEFAULT '{}'");
   await tx.query('UPDATE installations i SET recipe=a.recipe FROM artifacts a WHERE a.id=i.artifact_id');
   await tx.query('INSERT INTO migrations VALUES (3,$1)',[Date.now()]);
+  await agentInstallations(tx);
+}
+
+async function agentInstallations(tx:SQL){
+  if((await tx.query('SELECT version FROM migrations WHERE version=4')).rows.length)return;
+  await tx.query('ALTER TABLE installations ADD COLUMN agent_id text REFERENCES agents(id)');
+  await tx.query('ALTER TABLE installations ADD COLUMN work_generation integer');
+  await tx.query('ALTER TABLE artifacts ALTER COLUMN bytes TYPE double precision');
+  await tx.query('INSERT INTO migrations VALUES (4,$1)',[Date.now()]);
 }

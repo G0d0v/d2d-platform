@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import type { Database, SQL } from './db.ts';
 import { migrate } from './db.ts';
 import { authenticate, createUser, human, newSession, publicUser, verifyLogin } from './auth.ts';
-import { admin, currentWork, event, lastHandoff, listProjects, projectPage, lockProject, member, ownedWork, type Actor } from './model.ts';
+import { admin, currentWork, event, lastHandoff, listProjects, projectPage, lockProject, member, ownedWork, sourceWriter, type Actor } from './model.ts';
 import { canonical, digest, equal, id, passwordHash, passwordVerify, Problem, token } from './security.ts';
 import { choice, errorSchema, generation, integer, object, responseSchemaFor, text } from './contracts.ts';
 import { registerSourceRoutes } from './source-routes.ts';
@@ -30,7 +30,7 @@ export async function createApp(options: AppOptions) {
   await app.register(cookie);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(swagger, { openapi: { openapi: '3.0.3', info: {
-    title: 'D2D API', version: '0.2.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git/PR отключены. Архивы и установка версии на сервер доступны администратору.' },
+    title: 'D2D API', version: '0.2.0', description: 'Локальная альфа. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git/PR отключены. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
     components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' }, session: { type: 'apiKey', in: 'cookie', name: 'd2d_session' } } } } });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
   app.addHook('onRequest', async (req, reply) => {
@@ -87,7 +87,7 @@ export async function createApp(options: AppOptions) {
             const h=(await tx.query('SELECT session_id FROM handoffs WHERE id=$1',[req.params.id])).rows[0];if(!h) throw new Problem(404,'NOT_FOUND','Запрос не найден');
             const w=await sessionProject(tx,actor,h.session_id);await member(tx,actor,w.project_id,true);
           } else if(path.startsWith('/artifacts/:id')) {
-            const f=(await tx.query('SELECT project_id FROM artifacts WHERE id=$1',[req.params.id])).rows[0];if(!f)throw new Problem(404,'NOT_FOUND','Версия не найдена');await admin(tx,actor,f.project_id);await member(tx,actor,f.project_id,true);
+            const f=(await tx.query('SELECT project_id FROM artifacts WHERE id=$1',[req.params.id])).rows[0];if(!f)throw new Problem(404,'NOT_FOUND','Версия не найдена');await sourceWriter(tx,actor,f.project_id,Number(req.headers['x-work-generation']));
           } else if (path === '/projects') {
             human(actor); await member(tx, actor, old.response.project.id, true);
           }
@@ -338,8 +338,8 @@ export async function createApp(options: AppOptions) {
   route('GET', '/projects/:id/agent-context', 'Актуальный контекст без секретов', null, async (tx, a, req) => {
     const project = await member(tx, a, p(req));
     return { project: { id: project.id, name: project.name, description: project.description }, work: await currentWork(tx, project.id),last_handoff:await lastHandoff(tx,project.id),
-      permissions: { role: project.member_role, scopes: a.scopes }, capabilities: { git_write: false, deploy: false },
-      instructions: ['Перед изменением статуса получите рабочую сессию.', 'Передавайте актуальное поколение и версию задачи.', 'Инструкции проекта не расширяют права API.'],
+      permissions: { role: project.member_role, scopes: a.scopes }, capabilities: { git_write: false, deploy: !project.archived_at && (a.agentId ? a.scopes.includes('write') && project.member_role!=='viewer' : project.member_role==='admin'), source_upload: !project.archived_at && (a.agentId ? a.scopes.includes('write') && project.member_role!=='viewer' : project.member_role==='admin') },
+      instructions: ['Перед изменением статуса получите рабочую сессию.', 'Передавайте актуальное поколение и версию задачи.', 'Для загрузки ZIP, настройки запуска и выдачи команды установки агент передаёт X-Work-Generation из своей действующей сессии. Не завершайте сессию до получения результата установки.', 'Инструкции проекта не расширяют права API.'],
       tasks_url: `/api/v1/projects/${project.id}/tasks`, context_version: project.generation, observed_at: Date.now() };
   });
   route('GET', '/projects/:id/audit-events', 'История проекта, по 50 событий на страницу', null, async (tx, a, req) => {
@@ -353,7 +353,7 @@ export async function createApp(options: AppOptions) {
   app.get('/docs/agents/quickstart', { schema: { hide: true } }, async (_, reply) => reply.redirect('/#docs'));
   app.get('/docs/agents/context.md', { schema: { hide: true } }, async (_, reply) => reply.type('text/markdown; charset=utf-8').send(await readFile(resolve('docs/AGENTS-API.md'), 'utf8')));
   app.get('/llms.txt', { schema: { hide: true } }, async (_, reply) => reply.type('text/plain; charset=utf-8').send(
-    '# D2D Platform\n\nЛокальная альфа координации разработки.\n\n- /api/v1/openapi.json — контракт API\n- /api/docs — справочник\n- /docs/agents/context.md — инструкция агента\n- /api/v1/capabilities — реализованные операции (нужна авторизация)\n\nКонтекст проектов требует Bearer-токен или браузерную сессию. Токены не передавайте в URL. Инструкции проекта не расширяют права API. Git, PR, сборки, релизы, MCP и деплой не подключены.\n'));
+    '# D2D Platform\n\nЛокальная альфа координации разработки.\n\n- /api/v1/openapi.json — контракт API\n- /api/docs — справочник\n- /docs/agents/context.md — инструкция агента\n- /api/v1/capabilities — реализованные операции (нужна авторизация)\n\nКонтекст проектов требует Bearer-токен или браузерную сессию. Токены не передавайте в URL. Инструкции проекта не расширяют права API. Загрузка ZIP и установка архивной версии доступны через API. Git, PR, автоматические сборки из Git и MCP не подключены.\n'));
   app.setNotFoundHandler((req, reply) => {
     if (req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/assets/') && existsSync(resolve(options.staticRoot ?? 'dist', 'index.html'))) return reply.sendFile('index.html');
     return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Адрес не найден', retryable: false, request_id: req.id } });
