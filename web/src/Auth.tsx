@@ -19,10 +19,10 @@ export function Auth({ onLogin }: { onLogin: (result: any) => void }) {
     } catch (err) { setError(err as Error); } finally { setBusy(false); }
   }
   return <div className="auth-layout"><section className="auth-story"><a className="brand" href="#"><span className="brand-symbol"><Waypoints size={24}/></span><span>D2D<span className="brand-light"> Platform</span></span></a>
-    <div className="story-content"><span className="eyebrow">DEVELOPER TO DEVELOPER</span><h1>Хорошая работа<br/>начинается<br/><em>с общего контекста.</em></h1><p>Проекты, задачи и передача работы.<br/>Всё, что нужно вашей команде, в одном месте.</p>
+    <div className="story-content"><span className="eyebrow">DEVELOPER TO DEVELOPER</span><h1>Код и задачи<br/>вашей закрытой команды</h1><p>Приватные Git-проекты, проверка изменений и передача работы между участниками.</p>
       <div className="story-flow"><span><GitBranch size={20}/> Взять в работу</span><i/><span><Users size={20}/> Передать контекст</span></div></div>
-    <div className="auth-footer"><ShieldCheck size={16}/> Приватное рабочее пространство <span>D2D · 0.2</span></div></section>
-    <section className="auth-form"><div className="auth-form-inner"><span className="eyebrow">ВАША КОМАНДА. ВАШИ ПРОЕКТЫ.</span><h2>{mode === 'register' ? setup ? 'Создайте своё пространство' : 'Присоединиться к команде' : mode === 'recover' ? 'Восстановить доступ' : 'С возвращением'}</h2>
+    <div className="auth-footer"><ShieldCheck size={16}/> Приватное рабочее пространство <span>D2D Platform</span></div></section>
+    <section className="auth-form"><div className="auth-form-inner"><span className="eyebrow">ВАША КОМАНДА. ВАШИ ПРОЕКТЫ.</span><h2>{mode === 'register' ? setup ? 'Создайте своё пространство' : 'Присоединиться к команде' : mode === 'recover' ? 'Восстановить доступ' : 'Войти в D2D'}</h2>
       <p className="muted">{mode === 'register' ? setup ? 'Первый аккаунт станет владельцем платформы.' : 'Введите данные и код приглашения от владельца.' : mode === 'recover' ? 'Используйте резервный код, сохранённый при регистрации.' : 'Войдите, чтобы продолжить работу над проектами.'}</p>
       <form onSubmit={submit}><fieldset disabled={busy}>{mode==='register'&&setup&&setupRequired&&<Field label="Код первоначальной настройки"><input name="setup_token" required type="password" autoComplete="off"/></Field>}<Field label="Логин"><input name="login" autoComplete="username" required minLength={3} maxLength={32} pattern="[a-zA-Z0-9][a-zA-Z0-9_-]+" placeholder="Ваш логин"/></Field>
         {mode === 'register' && <Field label="Ваше имя"><input name="display_name" required maxLength={80} autoComplete="name" placeholder="Как к вам обращаться"/></Field>}

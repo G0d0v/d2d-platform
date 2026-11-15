@@ -32,6 +32,12 @@ export class GitHistory {
   });this.locks.set(key,current);try{return await current;}finally{if(this.locks.get(key)===current)this.locks.delete(key);}
  }
  private async sha(run:(args:string[])=>Promise<string>,ref:string){return (await run(['rev-parse','--verify','--end-of-options',ref+'^{commit}'])).trim();}
+ paths(project:string,ref:string){return this.repository(project,async run=>{
+  const sha=await this.sha(run,ref);
+  const paths=(await run(['ls-tree','-r','-z','--name-only',sha])).split('\0').filter(Boolean);
+  if(paths.length>100000)throw new Problem(422,'TREE_TOO_LARGE','Список файлов слишком велик для предварительного просмотра');
+  return paths;
+ });}
  snapshot(project:string){return this.repository(project,async run=>new Set((await run(['rev-list','--all'])).trim().split('\n').filter(Boolean)));}
  async recordPush(tx:SQL,project:string,a:Actor,w:any,before:Set<string>){
   const after=await this.snapshot(project);for(const sha of after)if(!before.has(sha))await recordOwnership(tx,project,sha,a,w);

@@ -9,7 +9,7 @@
 [Установить](#установка-одной-командой) · [Возможности](#что-внутри) · [Инструкция агента](docs/AGENTS-API.md) · [Развёртывание](docs/SELF-HOSTING.md)
 
 [![Проверка D2D](https://github.com/G0d0v/d2d-platform/actions/workflows/verify.yml/badge.svg)](https://github.com/G0d0v/d2d-platform/actions/workflows/verify.yml)
-![Version](https://img.shields.io/badge/версия-0.6.0-238636?style=flat-square)
+![Version](https://img.shields.io/badge/версия-0.6.1-238636?style=flat-square)
 ![Language](https://img.shields.io/badge/интерфейс-русский-58a6ff?style=flat-square)
 ![Hosting](https://img.shields.io/badge/размещение-свой_сервер-8b949e?style=flat-square)
 
@@ -24,6 +24,8 @@ Git обслуживает приватный Forgejo. D2D предоставл�
 ![Реальный интерфейс D2D: репозиторий, ветки, файлы и README](docs/images/repository.png)
 
 <sub>Скриншот опубликованного интерфейса на тестовом проекте, версия оформления 0.4. В 0.5 добавлены обсуждения, уведомления, история файлов и панели операций.</sub>
+
+**Обновление 0.6.1:** перетаскивание файлов и папок, наглядный список загрузки, подтверждение замен и отдельная кнопка «Заменить файл». [Описание релиза](docs/RELEASE-0.6.1.md) · [Аудит интерфейса](docs/DESIGN-AUDIT-0.6.1.md).
 
 **Новое в 0.6.0:** загрузка файлов и папок без ZIP, выбор ветки и папки, сравнение релизов и обновление только изменённых исходников. [Описание релиза](docs/RELEASE-0.6.0.md) · [Как пользоваться](docs/FILE-UPDATES.md).
 
