@@ -2,7 +2,7 @@
 # D2D self-host, Debian/Ubuntu, Docker Compose v2. Never alters an existing native D2D.
 set -Eeuo pipefail
 umask 077
-version="${D2D_VERSION:-v0.6.0}"
+version="${D2D_VERSION:-v0.6.1}"
 [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || exit 1
 repo=G0d0v/d2d-platform
 root=/opt/d2d-community

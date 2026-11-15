@@ -38,6 +38,10 @@ export function registerGitRoutes(app:FastifyInstance,route:Register,db:Database
     const result=await client().json(`${base(req.params.id)}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`);
     return {entries:Array.isArray(result)?result:[result]};
   });
+  route('GET','/projects/:id/git/paths','Пути файлов для предварительной проверки замен',null,async(tx,a,req)=>{
+    await member(tx,a,req.params.id);client();
+    return {paths:await history!.paths(req.params.id,param(req,'ref','main'))};
+  });
   route('GET','/projects/:id/git/raw','Полный файл из Git',null,async(tx,a,req,reply)=>{
     await member(tx,a,req.params.id);const path=param(req,'path');if(!path)throw new Problem(422,'PATH_REQUIRED','Укажите путь файла');
     const r=await client().request(`${base(req.params.id)}/raw/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(param(req,'ref','main'))}`);

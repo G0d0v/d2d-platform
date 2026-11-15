@@ -39,7 +39,7 @@ export async function createApp(options: AppOptions) {
   await app.register(cookie);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(swagger, { openapi: { openapi: '3.0.3', info: {
-    title: 'D2D API', version: '0.6.0', description: 'Платформа закрытого сообщества разработчиков. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
+    title: 'D2D API', version: '0.6.1', description: 'Платформа закрытого сообщества разработчиков. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
     components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' }, session: { type: 'apiKey', in: 'cookie', name: 'd2d_session' } } } } });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
   app.addHook('onRequest', async (req, reply) => {

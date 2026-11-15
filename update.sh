@@ -2,7 +2,7 @@
 # Update an existing D2D installation. Preserve configuration and back up data before switching.
 set -Eeuo pipefail
 umask 077
-version="${D2D_VERSION:-v0.6.0}"
+version="${D2D_VERSION:-v0.6.1}"
 [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || exit 2
 [[ "$EUID" == 0 ]] || { echo 'Запустите через sudo bash'; exit 2; }
 if [[ -f /opt/d2d-community/runtime.env ]]; then

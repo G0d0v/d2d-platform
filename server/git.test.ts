@@ -62,6 +62,8 @@ test('настоящий Forgejo: clone/push, ветки, PR, review, merge, р�
     await run(['add','README.md','Dockerfile']);await run(['-c','user.name=Test','-c','user.email=test@local.invalid','commit','-m','Initial']);await run(['push','origin','main']);
     let status=await call(agent,'GET',`/projects/${p.id}/git`);for(let attempt=0;attempt<30&&status.json().repository.empty;attempt++){await new Promise(r=>setTimeout(r,100));status=await call(agent,'GET',`/projects/${p.id}/git`);}assert.equal(status.json().repository.empty,false,status.body);
     const tree=await call(agent,'GET',`/projects/${p.id}/git/tree?ref=main`);assert.equal(tree.statusCode,200,tree.body);assert.equal(tree.json().entries.length,2);
+    const paths=await call(agent,'GET',`/projects/${p.id}/git/paths?ref=main`);assert.equal(paths.statusCode,200,paths.body);assert.deepEqual(paths.json().paths,['Dockerfile','README.md']);
+    assert.equal((await call(reviewer.headers,'GET',`/projects/${p.id}/git/paths?ref=main`)).statusCode,200);
     assert.equal((await call(agent,'GET',`/projects/${p.id}/git/raw?ref=main&path=README.md`)).body,'# Initial code\n');
     await run(['checkout','-b',w.branch]);await writeFile(join(checkout,'README.md'),'# Updated code\n');await run(['add','README.md']);await run(['-c','user.name=Test','-c','user.email=test@local.invalid','commit','-m','Update']);await run(['push','origin',w.branch]);
     const meta=await call(agent,'GET',`/projects/${p.id}/git/file-metadata?ref=${encodeURIComponent(w.branch)}`);assert.equal(meta.statusCode,200,meta.body);assert.ok(meta.json().files.find((f:any)=>f.path==='README.md').added_at);
