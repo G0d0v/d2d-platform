@@ -89,7 +89,7 @@ dialog:has(.upload-form), dialog:has(.file-picker) { width: min(720px, calc(100v
   .file-picker-actions .text-button { flex-basis: 100%; justify-content: center; }
   .upload-destination { flex-wrap: wrap; padding: 12px; }
   .upload-branch { max-width: 100%; }
-  .repo-toolbar { gap: 8px; }
+  .repo-toolbar { gap: 8px; flex-wrap: wrap; }
   .repo-toolbar-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   .repo-file-row > span:first-of-type { flex-basis: 50%; }
   .agent-guide, .agent-card, .host-card, .project-update-footer { padding: 16px; }
