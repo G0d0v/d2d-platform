@@ -12,7 +12,9 @@ import { digest,id,Problem,token } from './security.ts';
 import { choice,integer,object,text } from './contracts.ts';
 import { inspectArchive,archiveFileStream } from './archives.ts';
 import type {Forgejo} from './forgejo.ts';
-import {importSource} from './git-source.ts';
+import {importSource,commitFiles,type UploadTarget} from './git-source.ts';
+import {FILES_MEDIA,receiveFiles,safeSourcePath} from './file-upload.ts';
+import {archiveDelta} from './delta-packages.ts';
 import {recordOwnership} from './git-history.ts';
 import {notify} from './notifications.ts';
 
@@ -21,13 +23,20 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
   const blobs=resolve(options.dataDir??'.d2d','blobs');
   const blob=(sha:string)=>resolve(blobs,sha+'.zip');
   type Upload={temp:string;sha:string;bytes:number;scan:Awaited<ReturnType<typeof inspectArchive>>};
-  const uploads=new WeakMap<object,string>();
-  app.addHook('onResponse',async req=>{const temp=uploads.get(req);if(temp)await rm(temp,{force:true});});
+  const uploads=new WeakMap<object,string>(),fileUploads=new WeakMap<object,any>();
+  app.addHook('onResponse',async req=>{const temp=uploads.get(req);if(temp)await rm(temp,{force:true});const files=fileUploads.get(req);if(files)await rm(files.directory,{recursive:true,force:true});});
+  app.addContentTypeParser(FILES_MEDIA,async(req:FastifyRequest,body:Readable)=>{
+    const match=/^\/api\/v1\/projects\/([a-f0-9-]{36})\/git\/upload(?:\?.*)?$/.exec(req.url);
+    if(req.method!=='POST'||!match)throw new Problem(415,'FILES_REQUIRED','Этот формат поддерживается только загрузкой файлов в Git');
+    await db.transaction(async tx=>{const a=await authenticate(tx,req,true);await ownedWork(tx,a,match[1],Number(req.headers['x-work-generation']));});
+    const directory=resolve(options.dataDir??'.d2d','uploads',id());const data={directory,files:[] as {path:string;size:number}[]};fileUploads.set(req,data);
+    try{data.files=await receiveFiles(body,directory);return data;}catch(e){await rm(directory,{recursive:true,force:true});throw e;}
+  });
   app.addContentTypeParser('application/zip',async(req:FastifyRequest,body:Readable)=>{
-    const match=/^\/api\/v1\/projects\/([^/?]+)\/source(?:\?.*)?$/.exec(req.url);
+    const match=/^\/api\/v1\/projects\/([^/?]+)\/(source|git\/upload)(?:\?.*)?$/.exec(req.url);
     if(req.method!=='POST'||!match)throw new Problem(415,'ZIP_REQUIRED','ZIP поддерживается только при загрузке исходников');
     // Authorize before receiving bytes, then recheck inside the mutation after upload.
-    await db.transaction(async tx=>{const a=await authenticate(tx,req,true);await sourceWriter(tx,a,match[1],Number(req.headers['x-work-generation']));});
+    await db.transaction(async tx=>{const a=await authenticate(tx,req,true);if(match[2]==='git/upload')await ownedWork(tx,a,match[1],Number(req.headers['x-work-generation']));else await sourceWriter(tx,a,match[1],Number(req.headers['x-work-generation']));});
     await mkdir(blobs,{recursive:true,mode:0o700});const temp=resolve(blobs,id()+'.upload');uploads.set(req,temp);
     const hash=createHash('sha256');let bytes=0;
     try{
@@ -36,6 +45,20 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
       return {temp,sha:hash.digest('hex'),bytes,scan} satisfies Upload;
     }catch(e){await rm(temp,{force:true});throw e;}
   });
+  route('POST','/projects/:id/git/upload','Загрузить файлы, папку или ZIP в каталог выбранной ветки одним коммитом',null,async(tx,a,req)=>{
+    const w=await ownedWork(tx,a,req.params.id,Number(req.headers['x-work-generation']));
+    if(!options.git)throw new Problem(503,'GIT_NOT_CONFIGURED','Git ещё не настроен');
+    const q=new URL(req.url,'http://local').searchParams;
+    const target:UploadTarget={branch:q.get('branch')??w.branch,from:q.get('from')??'',expected_head:q.get('expected_head')??'',new_branch:q.get('new_branch')==='true',path:q.get('path')??'',message:q.get('message')??''};
+    if(!target.message.trim()||target.message.length>500||target.branch.length>200||target.from.length>200||(!/^[a-f0-9]{40,64}$/.test(target.expected_head)&&target.expected_head!==''))throw new Problem(422,'INVALID_UPLOAD','Укажите ветку и описание изменений до 500 символов');
+    safeSourcePath(target.path,true);await options.git.ensure(req.params.id);
+    const files=fileUploads.get(req),zip=req.body as Upload;
+    if(!files&&(!zip?.temp||uploads.get(req)!==zip.temp))throw new Problem(415,'FILES_REQUIRED','Выберите файлы, папку или ZIP');
+    const input=files??{archive:zip.temp,root:q.get('strip_root')==='false'?'':zip.scan.root};
+    const result=await commitFiles(options.git,req.params.id,input,resolve(options.dataDir??'.d2d','git-work'),target,a);
+    await recordOwnership(tx,req.params.id,result.commit_sha,a,w);
+    await event(tx,a,req.params.id,'git.files.uploaded',result.changed?target.message:'Проверена загрузка: файлы не изменились',{...result,path:target.path,generation:w.generation});return result;
+  },{idempotent:false});
   route('GET','/projects/:id/source','Версии загруженного исходного проекта',null,async(tx,a,req)=>{
     await member(tx,a,req.params.id);return {artifacts:(await tx.query('SELECT * FROM artifacts WHERE project_id=$1 ORDER BY created_at DESC,id DESC',[req.params.id])).rows,
       installations:(await tx.query('SELECT id,artifact_id,state,host,message,created_at,updated_at FROM installations WHERE project_id=$1 ORDER BY created_at DESC LIMIT 100',[req.params.id])).rows};
@@ -101,12 +124,21 @@ export function registerSourceRoutes(app:FastifyInstance,route:Register,db:Datab
     if(!job)throw new Problem(401,'INSTALL_TOKEN_EXPIRED','Команда установки истекла или доступ отозван');return job;
   }
   app.get<{Params:{id:string}}>('/api/install/:id/archive',{schema:{hide:true}},async(req,reply)=>{const job=await db.transaction(tx=>installation(req,tx));return reply.type('application/zip').header('Cache-Control','no-store').send(createReadStream(blob(job.sha256)));});
+  app.get<{Params:{id:string};Querystring:{base_artifact_id:string}}>('/api/install/:id/delta',{schema:{hide:true}},async(req,reply)=>{
+    const job=await db.transaction(tx=>installation(req,tx));
+    const before=(await db.query('SELECT * FROM artifacts WHERE id=$1 AND project_id=$2',[req.query.base_artifact_id??'',job.project_id])).rows[0];
+    const after=(await db.query('SELECT * FROM artifacts WHERE id=$1',[job.artifact_id])).rows[0];
+    if(!before)throw new Problem(409,'DELTA_UNAVAILABLE','Исходный архив больше недоступен; нужна полная установка');
+    const path=await archiveDelta(blobs,job.project_id,before,after);return reply.type('application/zip').header('Cache-Control','no-store').send(createReadStream(path));
+  });
   app.post<{Params:{id:string};Body:{host:string}}>('/api/install/:id/claim',{schema:{body:object({host:{...text(100),pattern:'^[a-zA-Z0-9._-]+$'}}),hide:true}},async(req)=>db.transaction(async tx=>{
     await tx.query('SELECT id FROM control WHERE id=1 FOR UPDATE');const job=await installation(req,tx);if(job.host&&job.host!==req.body.host)throw new Problem(409,'INSTALL_ALREADY_CLAIMED','Команда уже используется другим сервером');
     if(job.state==='failed')throw new Problem(409,'INSTALL_FAILED','Предыдущая попытка завершилась ошибкой. Выдайте новую команду');
     await tx.query("UPDATE installations SET host=$1,state=CASE WHEN state='installed' THEN state ELSE 'running' END,updated_at=$2 WHERE id=$3",[req.body.host,Date.now(),job.id]);
-    return {project_id:job.project_id,artifact_id:job.artifact_id,sha256:job.sha256,recipe:job.recipe,state:job.state};
+    const artifact=(await tx.query('SELECT commit_sha FROM artifacts WHERE id=$1',[job.artifact_id])).rows[0];
+    return {project_id:job.project_id,artifact_id:job.artifact_id,sha256:job.sha256,recipe:job.recipe,state:job.state,commit_sha:artifact?.commit_sha??null};
   }));
+  app.get('/project-update.py',{schema:{hide:true}},async(_req,reply)=>reply.type('text/plain; charset=utf-8').send(await readFile(resolve('scripts/apply-project-update.py'),'utf8')));
   app.post<{Params:{id:string};Body:{host:string;state:string;message:string}}>('/api/install/:id/result',{schema:{body:object({host:{...text(100),pattern:'^[a-zA-Z0-9._-]+$'},state:choice('installed','failed'),message:text(1000,0)}),hide:true}},async(req)=>db.transaction(async tx=>{
     await tx.query('SELECT id FROM control WHERE id=1 FOR UPDATE');const job=await installation(req,tx);if(job.host!==req.body.host)throw new Problem(409,'INSTALL_HOST_MISMATCH','Сервер не совпадает');
     if(['failed','installed'].includes(job.state)&&job.state!==req.body.state)throw new Problem(409,'INSTALL_TERMINAL','Результат установки уже сохранён');

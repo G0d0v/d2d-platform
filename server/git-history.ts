@@ -1,14 +1,16 @@
 import {spawn} from 'node:child_process';
-import {mkdir,mkdtemp,rm} from 'node:fs/promises';
-import {existsSync} from 'node:fs';
+import {mkdir,mkdtemp,rm,rename} from 'node:fs/promises';
+import {existsSync,createReadStream} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 import type {Forgejo} from './forgejo.ts';
 import type {SQL} from './db.ts';
 import type {Actor} from './model.ts';
 import {Problem} from './security.ts';
 
+const repositoryLocks=new Map<string,Promise<unknown>>();
 export class GitHistory {
- private locks=new Map<string,Promise<unknown>>();
+ private locks=repositoryLocks;
  private metadataCache=new Map<string,any>();
  constructor(private git:Forgejo,private root:string){}
  private async run(cwd:string,args:string[],extra:Record<string,string>={}){
@@ -21,13 +23,13 @@ export class GitHistory {
   });
  }
  private async repository<T>(project:string,fn:(run:(args:string[])=>Promise<string>)=>Promise<T>):Promise<T>{
-  const previous=this.locks.get(project)??Promise.resolve();
+  const key=resolve(this.root)+'\0'+project,previous=this.locks.get(key)??Promise.resolve();
   const current=previous.catch(()=>{}).then(async()=>{
    this.git.repo(project);await mkdir(this.root,{recursive:true,mode:0o700});const dir=resolve(this.root,project);
    if(!existsSync(resolve(dir,'HEAD')))await this.run(this.root,['clone','--mirror',`${this.git.options.url}/${this.git.repo(project)}.git`,dir]);
    else await this.run(dir,['fetch','--prune','origin','+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*']);
    return fn(args=>this.run(dir,args));
-  });this.locks.set(project,current);try{return await current;}finally{if(this.locks.get(project)===current)this.locks.delete(project);}
+  });this.locks.set(key,current);try{return await current;}finally{if(this.locks.get(key)===current)this.locks.delete(key);}
  }
  private async sha(run:(args:string[])=>Promise<string>,ref:string){return (await run(['rev-parse','--verify','--end-of-options',ref+'^{commit}'])).trim();}
  snapshot(project:string){return this.repository(project,async run=>new Set((await run(['rev-list','--all'])).trim().split('\n').filter(Boolean)));}
@@ -49,6 +51,23 @@ export class GitHistory {
   return {commits:commits.slice(0,50),has_more:commits.length>50,page,ref:sha,path};
  });}
  diff(project:string,ref:string,path?:string){return this.repository(project,async run=>{const sha=await this.sha(run,ref);return run(['show','--diff-merges=first-parent','--format=','--no-ext-diff','--no-textconv','--find-renames',sha,...(path?['--',path]:[])]);});}
+ compare(project:string,from:string,to:string,includeDiff=true){return this.repository(project,async run=>{
+  const base=await this.sha(run,from),head=await this.sha(run,to),raw=(await run(['diff','--name-status','--no-renames','-z',base,head,'--'])).split('\0');const files=[];
+  for(let i=0;i<raw.length-1;i+=2)files.push({status:raw[i],path:raw[i+1]});
+  return {base_sha:base,head_sha:head,files,diff:includeDiff?await run(['diff','--no-ext-diff','--no-textconv','--no-renames',base,head,'--']):''};
+ });}
+ delta(project:string,from:string,to:string){return this.repository(project,async run=>{
+  const base=await this.sha(run,from),head=await this.sha(run,to);const cache=resolve(this.root,'packages');await mkdir(cache,{recursive:true,mode:0o700});
+  const path=resolve(cache,`${project}-${base}-${head}.zip`);
+  if(!existsSync(path)){
+   const temporary=path+'.tmp';
+   try{await new Promise<void>((ok,fail)=>{
+    const child=spawn(process.env.PYTHON??(process.platform==='win32'?'python':'python3'),[resolve('scripts/git-delta.py'),base,head,temporary],{cwd:resolve(this.root,project),windowsHide:true,stdio:['ignore','ignore','pipe']});child.stderr.resume();const timer=setTimeout(()=>child.kill(),3600000);
+    child.once('error',()=>{clearTimeout(timer);fail(new Problem(503,'DELTA_UNAVAILABLE','Для пакетов обновления установите Python 3 на сервере D2D'));});child.once('close',code=>{clearTimeout(timer);code===0?ok():fail(new Problem(422,'DELTA_UNSAFE','Нельзя собрать обновление: проверьте пути, типы файлов и доступность версий'));});
+   });await rename(temporary,path);}finally{await rm(temporary,{force:true});}
+  }
+  const hash=createHash('sha256');for await(const part of createReadStream(path))hash.update(part);return {path,sha256:hash.digest('hex'),base_sha:base,head_sha:head};
+ });}
  async revert(project:string,ref:string,expected:string,target:string,branch:string,a:Actor){
   await mkdir(this.root,{recursive:true,mode:0o700});const directory=await mkdtemp(resolve(this.root,'revert-'));
   try{

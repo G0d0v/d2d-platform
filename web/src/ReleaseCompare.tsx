@@ -1,0 +1,11 @@
+import {useEffect,useState} from 'react';
+import {api} from './api.ts';
+import {ErrorBox} from './components.tsx';
+import {GitDiff} from './GitContent.tsx';
+
+export function ReleaseCompare({projectId,from,to,fromLabel=from,toLabel=to,defaultOpen=false}:{projectId:string;from:string;to:string;fromLabel?:string;toLabel?:string;defaultOpen?:boolean}){
+ const [result,setResult]=useState<any>(null),[error,setError]=useState<Error|null>(null),[diff,setDiff]=useState(false),[expanded,setExpanded]=useState(defaultOpen);
+ useEffect(()=>{if(!expanded)return;let active=true;setResult(null);setError(null);void api(`/projects/${projectId}/git/compare?${new URLSearchParams({from,to,format:'summary'})}`).then(r=>{if(active)setResult(r);}).catch(e=>{if(active)setError(e);});return()=>{active=false;};},[projectId,from,to,expanded]);
+ const query=result?new URLSearchParams({from:result.base_sha,to:result.head_sha}).toString():'';
+ return <section className="release-compare"><h3><button className="text-button" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>Что изменилось: {fromLabel} → {toLabel}</button></h3>{expanded&&<><ErrorBox error={error}/>{result?<><p className="muted small-text">Добавлено: {result.files.filter((f:any)=>f.status==='A').length} · Изменено: {result.files.filter((f:any)=>!['A','D'].includes(f.status)).length} · Удалено: {result.files.filter((f:any)=>f.status==='D').length}</p><div className="heading-actions"><button className="button small" onClick={()=>setDiff(!diff)}>{diff?'Скрыть diff':'Красно-зелёный diff'}</button><a className="button small" href={`/api/v1/projects/${projectId}/git/delta?${query}`}>Скачать изменённые файлы</a><a className="text-button" href="https://github.com/G0d0v/d2d-platform/blob/main/docs/FILE-UPDATES.md" target="_blank" rel="noreferrer">Как применить пакет</a></div><details><summary>Список файлов ({result.files.length})</summary><ul className="release-file-list">{result.files.map((f:any)=><li key={f.path}><span className={f.status==='D'?'diff-removed':'diff-added'}>{({A:'Добавлен',M:'Изменён',D:'Удалён',T:'Изменён тип'} as any)[f.status]??f.status}</span> <code>{f.path}</code></li>)}</ul></details>{diff&&<GitDiff url={`/api/v1/projects/${projectId}/git/compare?${query}&format=diff`}/>}</>:!error&&<p role="status" className="muted">Сравниваем версии…</p>}</>}</section>;
+}

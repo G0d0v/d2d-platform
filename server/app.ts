@@ -39,7 +39,7 @@ export async function createApp(options: AppOptions) {
   await app.register(cookie);
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(swagger, { openapi: { openapi: '3.0.3', info: {
-    title: 'D2D API', version: '0.5.0', description: 'Платформа закрытого сообщества разработчиков. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
+    title: 'D2D API', version: '0.6.0', description: 'Платформа закрытого сообщества разработчиков. Мутации требуют Idempotency-Key, кроме входа, регистрации, восстановления, выхода и одноразовой выдачи приглашения/токена агента. Cookie-аутентификация требует X-CSRF-Token из /me. Время — UTC epoch milliseconds. Git и проверка изменений доступны при настроенном Forgejo. MCP: /mcp. Архивы и установка доступны администратору и агенту с write в своей рабочей сессии (X-Work-Generation).' },
     components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' }, session: { type: 'apiKey', in: 'cookie', name: 'd2d_session' } } } } });
   await app.register(swaggerUi, { routePrefix: '/api/docs' });
   app.addHook('onRequest', async (req, reply) => {
@@ -146,7 +146,7 @@ export async function createApp(options: AppOptions) {
     user: publicUser((await tx.query('SELECT * FROM users WHERE id=$1', [a.userId])).rows[0]), csrf: a.csrf, agent_id: a.agentId, scopes: a.scopes,
   }));
   route('GET', '/capabilities', 'Реально реализованные возможности', null, async () => ({ api_version: 'v1', work_sessions: true, tasks: true, agents: true,
-    forgejo: !!git, git_write: !!git, reviews: !!git, builds: false, releases: !!git, deployments: true, source_upload:true, mcp: true, discussions:true, notifications:true, managed_hosts:true, agent_activity:true, file_history:!!git, own_commit_revert:!!git }));
+    forgejo: !!git, git_write: !!git, reviews: !!git, builds: false, releases: !!git, deployments: true, source_upload:true, mcp: true, discussions:true, notifications:true, managed_hosts:true, agent_activity:true, file_history:!!git, own_commit_revert:!!git, file_upload:!!git, folder_upload:!!git, release_compare:!!git, incremental_updates:!!git }));
   route('POST', '/invites', 'Пригласить коллегу, при необходимости сразу в проект', object({project_id:text(80),role:choice('admin','developer','viewer')},[]), async (tx, a,req) => {
     human(a); if(req.body.project_id) await admin(tx,a,req.body.project_id); else if (a.role !== 'owner') throw new Problem(403, 'FORBIDDEN', 'Приглашения создаёт владелец платформы или администратор проекта');
     const raw = token(), expires = Date.now() + 86400000;

@@ -58,9 +58,38 @@ if [[ -f "$ROOT/current-fingerprint" && "$(cat "$ROOT/current-fingerprint")" == 
   report installed 'Эта версия уже установлена; состояние контейнеров проверено.'
   claimed=0; echo 'Эта версия уже установлена.'; exit 0
 fi
+mkdir -p "$RELEASE/source"
+delta=0
+if [[ -f "$OLD_RELEASE/manifest.json" && "${D2D_FULL_DOWNLOAD:-0}" != 1 ]]; then
+  python3 - "$OLD_RELEASE" "$TEMP/manifest.json" >"$TEMP/delta-meta" <<'PY'
+import json,pathlib,re,sys
+r=pathlib.Path(sys.argv[1]);old=json.load(open(r/'manifest.json'));new=json.load(open(sys.argv[2]))
+if re.fullmatch('[a-f0-9-]{36}',old.get('artifact_id','')) and re.fullmatch('[a-f0-9]{64}',old.get('sha256','')) and old['project_id']==new['project_id']:
+    # Roots are validated paths from the D2D archive inspector, never shell expressions.
+    for value in (old['recipe']['root'],new['recipe']['root']):
+        if value and (value.startswith('/') or any(p in ('.','..') for p in value.split('/')) or '\\' in value):raise RuntimeError('Unsafe source root')
+    print(old['artifact_id']);print(r/'source'/old['recipe']['root']);print(new['recipe']['root']);print(old['sha256'])
+PY
+  mapfile -t delta_meta <"$TEMP/delta-meta"
+  if [[ "${#delta_meta[@]}" == 4 ]] && curl -fsS --retry 2 "${auth[@]}" "$BASE/delta?base_artifact_id=${delta_meta[0]}" -o "$TEMP/update.zip"; then
+    destination="$RELEASE/source/${delta_meta[2]}"
+    mkdir -p "$destination"
+    cp -a -- "${delta_meta[1]}/." "$destination/"
+    curl -fsS --retry 2 "${D2D_URL%/}/project-update.py" -o "$TEMP/apply-update.py"
+    python3 - "$TEMP/update.zip" "$TEMP/manifest.json" "${delta_meta[3]}" <<'PY'
+import json,sys,zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    m=json.loads(z.read('d2d-update.json'))
+assert m['base_sha']==sys.argv[3] and m['head_sha']==json.load(open(sys.argv[2]))['sha256'], 'Версии пакета не совпали'
+PY
+    python3 "$TEMP/apply-update.py" "$TEMP/update.zip" "$destination"
+    delta=1
+    echo 'Скачаны только изменённые файлы. Неизменённые исходники скопированы из предыдущей установки.'
+  fi
+fi
+if [[ "$delta" == 0 ]]; then
 curl -fsS --retry 2 "${auth[@]}" "$BASE/archive" -o "$TEMP/project.zip"
 printf '%s  %s\n' "$SHA" "$TEMP/project.zip" | sha256sum -c -
-mkdir -p "$RELEASE/source"
 python3 - "$TEMP/project.zip" "$RELEASE/source" <<'PY'
 import zipfile,sys,pathlib,stat
 root=pathlib.Path(sys.argv[2]).resolve()
@@ -70,7 +99,14 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         p=(root/e.filename).resolve()
         if not p.is_relative_to(root) or stat.S_ISLNK(e.external_attr>>16): raise RuntimeError('Unsafe ZIP path')
     z.extractall(root)
+    for e in z.infolist():
+        p=root/e.filename
+        if not e.is_dir(): p.chmod(0o755 if (e.external_attr>>16)&0o111 else 0o644)
+        for parent in p.parents:
+            if parent==root:break
+            parent.chmod(0o755)
 PY
+fi
 cp "$TEMP/manifest.json" "$RELEASE/manifest.json"
 python3 - "$RELEASE" <<'PY'
 import json,pathlib,sys

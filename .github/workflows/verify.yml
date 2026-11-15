@@ -1,7 +1,7 @@
 name: Проверка D2D
 on:
   push:
-    branches: [main]
+    branches: [main, codex/file-uploads-releases]
   pull_request:
 permissions:
   contents: read
@@ -22,5 +22,18 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - name: Проверка серверных скриптов
         run: |
-          bash -n install.sh scripts/container-entrypoint.sh scripts/host-connect.sh scripts/project-installer.sh
-          python3 -m py_compile scripts/host-runner.py
+          bash -n install.sh update.sh scripts/container-entrypoint.sh scripts/host-connect.sh scripts/project-installer.sh
+          python3 -m py_compile scripts/host-runner.py scripts/git-delta.py scripts/apply-project-update.py
+      - name: Сборка и запуск Docker-образа
+        run: |
+          docker build -t d2d-ci .
+          docker run -d --name d2d-ci -p 127.0.0.1:19190:19090 -e PUBLIC_ORIGIN=http://127.0.0.1:19190 -e SETUP_TOKEN=ci-isolated-setup-code d2d-ci
+          trap 'docker logs --tail 60 d2d-ci; docker rm -f -v d2d-ci' EXIT
+          ready=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:19190/health; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = 1
+          curl -fsS http://127.0.0.1:19190/api/v1/status
+          docker exec d2d-ci python3 --version

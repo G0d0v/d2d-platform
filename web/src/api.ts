@@ -11,6 +11,13 @@ export async function uploadZip(projectId:string,file:File,generation?:number){
   let response:Response;try{response=await fetch(`/api/v1/projects/${projectId}/source`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/zip','X-CSRF-Token':csrf,'X-Filename':encodeURIComponent(file.name),...(generation?{'X-Work-Generation':String(generation)}:{})},body:file});}catch{throw new ApiError('Не получено подтверждение загрузки. Обновите список версий перед повтором.');}
   const data=await responseJson(response);if(!response.ok)throw new ApiError(data.error?.message??'Не удалось загрузить проект',data.error?.code,data.error?.request_id);return data;
 }
+export async function uploadGitFiles(projectId:string,files:{file:File;path:string}[],options:Record<string,string>,generation:number,zip?:File){
+ const manifest=new TextEncoder().encode(JSON.stringify({files:files.map(f=>({path:f.path,size:f.file.size}))}));
+ const length=new Uint8Array(4);new DataView(length.buffer).setUint32(0,manifest.byteLength);
+ const body=zip??new Blob([length,manifest,...files.map(f=>f.file)]);
+ let response:Response;try{response=await fetch(`/api/v1/projects/${projectId}/git/upload?${new URLSearchParams(options)}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':zip?'application/zip':'application/vnd.d2d.files-v1','X-CSRF-Token':csrf,'X-Work-Generation':String(generation)},body});}catch{throw new ApiError('Нет подтверждения загрузки. Обновите историю ветки перед повтором: коммит мог сохраниться.');}
+ const data=await responseJson(response);if(!response.ok)throw new ApiError(data.error?.message??'Загрузка не выполнена',data.error?.code,data.error?.request_id);return data;
+}
 export async function api<T = any>(path: string, method = 'GET', body?: unknown, extra: Record<string, string> = {}): Promise<T> {
   const intent = JSON.stringify({ path, method, body, extra });
   const mutation = method !== 'GET';

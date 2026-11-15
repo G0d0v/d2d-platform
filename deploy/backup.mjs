@@ -21,7 +21,7 @@ try{
  await Promise.all([pipeline(dump.stdout,createWriteStream(name+'.pg.dump',{flags:'wx',mode:0o600})),completed]);
  const paths=['var/lib/d2d','etc/d2d.env','etc/nginx/sites-available/d2d','etc/systemd/system/d2d.service'];
  if(hasForgejo)paths.push('var/lib/forgejo','etc/forgejo','etc/systemd/system/forgejo.service');
- await run('tar',['--exclude=*.upload','--exclude=*/git-work/*','-czf',name+'.files.tar.gz','-C','/',...paths]);
+ await run('tar',['--exclude=*.upload','--exclude=*/git-work/*','--exclude=*/git-cache/*','--exclude=*/uploads/*','-czf',name+'.files.tar.gz','-C','/',...paths]);
  await client.query('COMMIT');
  console.log('Backup complete: '+name);
 }catch(e){await client.query('ROLLBACK');throw e;}

@@ -239,3 +239,11 @@ dialog:has(.diff-view) {width:calc(100vw - 48px);max-width:1600px;max-height:94v
 
 .repo-file-detail {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .repo-file-date,.repo-file-size,.repo-file-row>svg {flex-shrink:0;}
+/* File uploads and release comparison share the repository's existing controls. */
+.upload-preview{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:12px}
+.release-compare{border-top:1px solid var(--border);padding:16px 0;min-width:0}
+.release-compare details{margin-top:12px}.release-file-list{max-height:260px;overflow:auto;padding-left:20px;font-size:12px;overflow-wrap:anywhere}.release-file-list li{padding:3px 0}
+.project-update-footer{margin:24px 0;padding:20px;border:1px solid var(--border);border-radius:6px;overflow-wrap:anywhere}.project-update-footer pre{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.platform-update{margin:24px 32px;padding:16px;border-top:1px solid var(--border);font-size:12px;overflow-wrap:anywhere}.platform-update summary{cursor:pointer;font-weight:600}.platform-update pre{white-space:pre-wrap;overflow-wrap:anywhere}.platform-update p{margin:12px 0}
+@media(max-width:600px){.work-banner-content{flex-basis:100%;min-width:100%}.work-banner-actions{width:100%;justify-content:flex-start}.repo-path-bar>.heading-actions{flex-wrap:wrap;gap:8px}.repo-path-bar .repo-search{flex:1;min-width:120px}.platform-update{margin:20px 16px;padding:16px 0}}

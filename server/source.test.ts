@@ -1,4 +1,5 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join,resolve,dirname,basename} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join,resolve,dirname,basename} from 'node:path';
 import {database} from './db.ts';import {createApp} from './app.ts';import {inspectArchive} from './archives.ts';
 export function zipFiles(files:Record<string,string>,mode=0o100644){
   const parts:Buffer[]=[],central:Buffer[]=[];let offset=0;
@@ -37,6 +38,16 @@ test('исходный проект: загрузка, просмотр, изо�
     assert.equal((await install('POST','result',{host:'test-server',state:'failed',message:'late'})).statusCode,409);
     assert.equal((await call(a,'GET',`/projects/${p.id}/source`)).json().installations[0].state,'installed');
     const stored=(await db.query('SELECT token_hash FROM installations WHERE id=$1',[job.id])).rows[0].token_hash;assert.notEqual(stored,raw);
+    // Legacy ZIP installations have no Git SHA. Compare exact archive bytes, including CRLF.
+    const nextZip=zipFiles({'wrapper/Dockerfile':'FROM busybox:1.37\nCMD ["httpd","-f","-p","3000"]\n','wrapper/README.md':'# Windows lines\r\n','wrapper/nested/new.txt':'new'});
+    const nextUpload=await call(a,'POST',`/projects/${p.id}/source`,nextZip,{'content-type':'application/zip'});assert.equal(nextUpload.statusCode,200,nextUpload.body);const nextArtifact=nextUpload.json().artifact;
+    const nextIssue=(await call(a,'POST',`/artifacts/${nextArtifact.id}/installations`,{})).json(),nextToken=nextIssue.command.match(/D2D_INSTALL_TOKEN='([^']+)'/)[1];
+    const incremental=await app.inject({url:`/api/install/${nextIssue.id}/delta?base_artifact_id=${f.id}`,headers:{authorization:'Bearer '+nextToken}});assert.equal(incremental.statusCode,200,incremental.body);
+    const update=join(directory,'update.zip'),installed=join(directory,'installed');await writeFile(update,incremental.rawPayload);await mkdir(installed);
+    await writeFile(join(installed,'Dockerfile'),'FROM busybox:1.37\nCMD ["httpd","-f","-p","3000"]\n');await writeFile(join(installed,'README.md'),'# Example');
+    const applied=spawnSync(process.platform==='win32'?'python':'python3',[resolve('scripts/apply-project-update.py'),update,installed],{encoding:'utf8',windowsHide:true});assert.equal(applied.status,0,applied.stderr);
+    assert.deepEqual(await readFile(join(installed,'README.md')),Buffer.from('# Windows lines\r\n'));assert.equal(await readFile(join(installed,'nested','new.txt'),'utf8'),'new');
+
     await db.query('UPDATE installations SET expires_at=$1 WHERE id=$2',[Date.now()-1,job.id]);assert.equal((await install('GET','archive')).statusCode,401);
   }finally{await app.close();await db.close();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(basename(target).startsWith('d2d-source-test-'));await rm(target,{recursive:true,force:true});}
 });

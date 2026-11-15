@@ -1,6 +1,6 @@
 import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
-import {createWriteStream} from 'node:fs';
+import {createWriteStream,createReadStream} from 'node:fs';
 import {mkdir,rm} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -60,6 +60,17 @@ export function registerGitRoutes(app:FastifyInstance,route:Register,db:Database
   route('GET','/projects/:id/git/commit-diff','Красно-зелёные изменения конкретного коммита',null,async(tx,a,req,reply)=>{
     await member(tx,a,req.params.id);client();const sha=param(req,'sha');if(!/^[a-f0-9]{40,64}$/.test(sha))throw new Problem(422,'COMMIT_REQUIRED','Выберите конкретный коммит');
     return reply.type('text/plain; charset=utf-8').send(await history!.diff(req.params.id,sha));
+  });
+  route('GET','/projects/:id/git/compare','Сравнить две версии: добавленные, изменённые, удалённые файлы и полный diff',null,async(tx,a,req,reply)=>{
+    await member(tx,a,req.params.id);client();const from=param(req,'from'),to=param(req,'to');
+    if(!from||!to||from.length>200||to.length>200)throw new Problem(422,'VERSIONS_REQUIRED','Выберите исходную и новую версии');
+    const result=await history!.compare(req.params.id,from,to,param(req,'format')!=='summary');return param(req,'format')==='diff'?reply.type('text/plain; charset=utf-8').send(result.diff):result;
+  });
+  route('GET','/projects/:id/git/delta','Скачать проверяемый пакет только изменённых файлов между версиями',null,async(tx,a,req,reply)=>{
+    await member(tx,a,req.params.id);client();const from=param(req,'from'),to=param(req,'to');
+    if(!from||!to||from.length>200||to.length>200)throw new Problem(422,'VERSIONS_REQUIRED','Выберите две версии');
+    const pack=await history!.delta(req.params.id,from,to);
+    return reply.type('application/zip').header('X-Checksum-Sha256',pack.sha256).header('Content-Disposition',`attachment; filename="update-${pack.base_sha.slice(0,12)}-${pack.head_sha.slice(0,12)}.zip"`).send(createReadStream(pack.path));
   });
   route('POST','/projects/:id/git/revert','Откатить свой коммит новым коммитом в рабочей ветке',object({sha:{...text(64),pattern:'^[a-f0-9]{40,64}$'},ref:text(200),expected_head:{...text(64),pattern:'^[a-f0-9]{40,64}$'},generation}),async(tx,a,req)=>{
     const w=await write(tx,a,req),owned=(await tx.query('SELECT user_id FROM git_ownership WHERE project_id=$1 AND commit_sha=$2',[req.params.id,req.body.sha])).rows[0];
@@ -128,7 +139,12 @@ export function registerGitRoutes(app:FastifyInstance,route:Register,db:Database
   route('GET','/projects/:id/git/releases','Опубликованные Git-версии',null,async(tx,a,req)=>{await member(tx,a,req.params.id);return {releases:await client().json(base(req.params.id)+'/releases?limit=50')};});
   route('POST','/projects/:id/git/releases','Опубликовать версию, закреплённую за коммитом',object({tag:text(100),name:text(200),body:text(10000,0),ref:text(200)}),async(tx,a,req)=>{
     await write(tx,a,req);const commit=await client().json(`${base(req.params.id)}/git/commits/${encodeURIComponent(req.body.ref)}`);
-    const release=await client().json(base(req.params.id)+'/releases','POST',{tag_name:req.body.tag,target_commitish:commit.sha,name:req.body.name,body:req.body.body,draft:false,prerelease:false});
+    const previous=(await client().json(base(req.params.id)+'/releases?limit=100')).find((r:any)=>!r.draft&&!r.prerelease);
+    let description=req.body.body;
+    if(previous){const changes=await history!.compare(req.params.id,/^[a-f0-9]{40,64}$/.test(previous.target_commitish??'')?previous.target_commitish:previous.tag_name,commit.sha,false);const labels:Record<string,string>={A:'Добавлен',M:'Изменён',D:'Удалён',T:'Изменён тип'};
+      description+=`\n\n## Изменения относительно ${previous.tag_name}\n\n`+(changes.files.length?changes.files.slice(0,100).map(f=>`- ${labels[f.status]??f.status}: \`${f.path.replace(/[\r\n`<>]/g,'')}\``).join('\n'):'Файлы исходного кода не изменились.')+`\n\nСравнение: ${changes.base_sha.slice(0,12)} → ${changes.head_sha.slice(0,12)}. Файлов: ${changes.files.length}. Полный diff и пакет обновления доступны в карточке релиза D2D.`;
+    }
+    const release=await client().json(base(req.params.id)+'/releases','POST',{tag_name:req.body.tag,target_commitish:commit.sha,name:req.body.name,body:description,draft:false,prerelease:false});
     await event(tx,a,req.params.id,'git.release','Опубликована Git-версия',{tag:req.body.tag,commit_sha:commit.sha});return {release};
   });
 }

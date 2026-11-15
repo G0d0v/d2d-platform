@@ -85,10 +85,26 @@ test('настоящий Forgejo: clone/push, ветки, PR, review, merge, р�
     const currentHistory=(await call(owner.headers,'GET',`/projects/${p.id}/git/file-history?ref=${encodeURIComponent(next.branch)}&path=README.md`)).json();
     const reverted=await call(owner.headers,'POST',`/projects/${p.id}/git/revert`,{sha:pull.head.sha,ref:next.branch,expected_head:currentHistory.ref,generation:next.generation},{'x-work-generation':String(next.generation)});assert.equal(reverted.statusCode,200,reverted.body);
     assert.equal((await call(owner.headers,'GET',`/projects/${p.id}/git/raw?ref=${encodeURIComponent(reverted.json().branch)}&path=README.md`)).body,'# Initial code\n');
+    const mainHead=(await call(owner.headers,'GET',`/projects/${p.id}/git/commits?ref=main`)).json().commits[0].sha;
+    const content=Buffer.from('New file from browser\n'),manifest=Buffer.from(JSON.stringify({files:[{path:'note.txt',size:content.length}]})),length=Buffer.alloc(4);length.writeUInt32BE(manifest.length);
+    const uploadOptions=new URLSearchParams({branch:'feature/web-upload',from:mainHead,expected_head:mainHead,new_branch:'true',path:'docs',message:'Add a single file'});
+    const webUpload=await call(owner.headers,'POST',`/projects/${p.id}/git/upload?${uploadOptions}`,Buffer.concat([length,manifest,content]),{'content-type':'application/vnd.d2d.files-v1','x-work-generation':String(next.generation)});
+    assert.equal(webUpload.statusCode,200,webUpload.body);assert.equal(webUpload.json().branch,'feature/web-upload');
+    assert.equal((await call(owner.headers,'GET',`/projects/${p.id}/git/raw?ref=feature/web-upload&path=docs/note.txt`)).body,'New file from browser\n');
+    assert.equal((await call(owner.headers,'GET',`/projects/${p.id}/git/raw?ref=feature/web-upload&path=Dockerfile`)).statusCode,200);
+    const compare=await call(owner.headers,'GET',`/projects/${p.id}/git/compare?from=v-test&to=feature/web-upload`);assert.equal(compare.statusCode,200,compare.body);assert.equal(compare.json().files.find((f:any)=>f.path==='docs/note.txt').status,'A');
+    const delta=await call(owner.headers,'GET',`/projects/${p.id}/git/delta?from=v-test&to=feature/web-upload`);assert.equal(delta.statusCode,200,delta.body);assert.equal(delta.rawPayload.readUInt16LE(0),0x4b50);
+    const release2=await call(owner.headers,'POST',`/projects/${p.id}/git/releases`,{tag:'v-test-2',name:'Files release',body:'One new file',ref:'feature/web-upload'},{'x-work-generation':String(next.generation)});assert.equal(release2.statusCode,200,release2.body);assert.match(release2.json().release.body,/docs\/note.txt/);
+    const snap2=await call(owner.headers,'POST',`/projects/${p.id}/git/snapshot`,{ref:'v-test-2'});assert.equal(snap2.statusCode,200,snap2.body);
+    const issued2=(await call(owner.headers,'POST',`/artifacts/${snap2.json().artifact.id}/installations`,{})).json();const installToken=issued2.command.match(/D2D_INSTALL_TOKEN='([^']+)'/)[1];
+    const installDelta=await app.inject({url:`/api/install/${issued2.id}/delta?base_artifact_id=${f.id}`,headers:{authorization:'Bearer '+installToken}});assert.equal(installDelta.statusCode,200,installDelta.body);
     const p2=(await call(owner.headers,'POST','/projects',{name:'Auto Git ZIP',slug:'auto-git-zip'})).json().project;uploadedProject=p2.id;
     await run(['archive','--format=zip','-o',join(directory,'upload.zip'),'HEAD']);
     const auto=await call(owner.headers,'POST',`/projects/${p2.id}/source`,await readFile(join(directory,'upload.zip')),{'content-type':'application/zip'});assert.equal(auto.statusCode,200,auto.body);assert.match(auto.json().git.commit_sha,/^[a-f0-9]{40}$/);assert.equal(auto.json().git.branch,'main');
     assert.equal((await call(owner.headers,'GET',`/projects/${p2.id}/git/raw?ref=main&path=README.md`)).body,'# Updated code\n');
+    const zipBranch=await call(owner.headers,'POST',`/projects/${p.id}/git/upload?${new URLSearchParams({branch:'feature/zip',from:mainHead,expected_head:mainHead,new_branch:'true',path:'nested',message:'ZIP in a selected folder'})}`,await readFile(join(directory,'upload.zip')),{'content-type':'application/zip','x-work-generation':String(next.generation)});
+    assert.equal(zipBranch.statusCode,200,zipBranch.body);assert.equal((await call(owner.headers,'GET',`/projects/${p.id}/git/raw?ref=feature/zip&path=nested/README.md`)).statusCode,200);
+
 
   }finally{if(uploadedProject)await git.json(`/repos/${git.repo(uploadedProject)}`,'DELETE');if(projectId)await git.json(`/repos/${git.repo(projectId)}`,'DELETE');await app.close();await db.close();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(target.includes('d2d-git-test-'));await rm(target,{recursive:true,force:true});}
 });
